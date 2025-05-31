@@ -50,7 +50,11 @@ class EnvMeta(type):
 
         # List all environments that should not be registered here.
         _unregistered_envs = ["MujocoEnv", "RobotEnv", "ManipulationEnv", "TwoArmEnv"]
-
+        print(cls.__name__,end=" gggg\n")
+        ## make an error and stop here
+        # if cls.__name__ == "Lift":
+        #     import fuck
+        #     fuck.fuck()
         if cls.__name__ not in _unregistered_envs:
             register_env(cls)
         return cls
@@ -313,6 +317,8 @@ class MujocoEnv(metaclass=EnvMeta):
                 _observables = self.viewer._setup_observables()
             else:
                 _observables = self._setup_observables()
+            # import pdb; pdb.set_trace()
+            print(_observables.keys(), end=" _observables\n")
             for obs_name, obs in _observables.items():
                 self.modify_observable(observable_name=obs_name, attribute="sensor", modifier=obs._sensor)
 
@@ -468,7 +474,7 @@ class MujocoEnv(metaclass=EnvMeta):
         self.cur_time += self.control_timestep
 
         reward, done, info = self._post_action(action)
-
+        # import pdb; pdb.set_trace()
         if self.viewer is not None and self.renderer != "mujoco":
             self.viewer.update()
         elif self.has_renderer and self.renderer == "mjviewer" and self.viewer is None:
@@ -476,8 +482,9 @@ class MujocoEnv(metaclass=EnvMeta):
             self.initialize_renderer()
             # so that mujoco viewer renders
             self.viewer.update()
-
+        # import pdb; pdb.set_trace()
         observations = self.viewer._get_observations() if self.viewer_get_obs else self._get_observations()
+        # import pdb; pdb.set_trace()
         return observations, reward, done, info
 
     def _pre_action(self, action, policy_step=False):
@@ -671,6 +678,8 @@ class MujocoEnv(metaclass=EnvMeta):
         Args:
             observable (Observable): Observable instance.
         """
+        print("add_observable : ",observable.name)
+        import pdb; pdb.set_trace()
         assert observable.name not in self._observables, (
             "Observable name {} is already associated with an existing observable! Use modify_observable(...) "
             "to modify a pre-existing observable.".format(observable.name)
@@ -689,6 +698,12 @@ class MujocoEnv(metaclass=EnvMeta):
                 match the function being replaced.
         """
         # Find the observable
+        if observable_name not in self._observables:
+            print("!!!!!!!!!!!!!!!!!")
+            print(self._observables.keys(), end=" _observables\n")
+            print(observable_name, end=" observable_name\n")
+            print(self.observation_names, end=" self.observation_names\n")
+            import pdb; pdb.set_trace()
         assert observable_name in self._observables, "No valid observable with name {} found. Options are: {}".format(
             observable_name, self.observation_names
         )

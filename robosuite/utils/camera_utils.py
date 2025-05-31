@@ -14,7 +14,8 @@ import numpy as np
 
 import robosuite
 import robosuite.utils.transform_utils as T
-from robosuite.wrappers import DomainRandomizationWrapper, VisualizationWrapper
+import open3d as o3d
+# from robosuite.wrappers import DomainRandomizationWrapper, VisualizationWrapper
 
 
 def get_camera_intrinsic_matrix(sim, camera_name, camera_height, camera_width):
@@ -125,7 +126,7 @@ def get_real_depth_map(sim, depth_map):
     return near / (1.0 - depth_map * (1.0 - near / far))
 
 
-def project_points_from_world_to_camera(points, world_to_camera_transform, camera_height, camera_width):
+def project_points_from_world_to_camera(points, world_to_camera_transform, camera_height, camera_width,K):
     """
     Helper function to project a batch of points in the world frame
     into camera pixels using the world to camera transformation.
@@ -152,13 +153,22 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     # batch matrix multiplication of 4 x 4 matrix and 4 x 1 vectors to do robot frame to pixels transform
     mat_reshape = [1] * len(points.shape[:-1]) + [4, 4]
     cam_trans = world_to_camera_transform.reshape(mat_reshape)  # shape [..., 4, 4]
-    pixels = np.matmul(cam_trans, points[..., None])[..., 0]  # shape [..., 4]
 
     # re-scaling from homogenous coordinates to recover pixel values
     # (x, y, z) -> (x / z, y / z)
+    ## transform points to camera frame
+    cam_points = points @ cam_trans.T
+
+    print("cam_points: ", cam_points[10000:10010])
+    ## red let check
+    print("\033[91m" + "let check" + "\033[0m")
+    import pdb; pdb.set_trace()
+    pixels = np.matmul(K, cam_points)[..., 0]
     pixels = pixels / pixels[..., 2:3]
     pixels = pixels[..., :2].round().astype(int)  # shape [..., 2]
 
+    print("pixels: ", pixels)
+    import pdb; pdb.set_trace()
     # swap first and second coordinates to get pixel indices that correspond to (height, width)
     # and also clip pixels that are out of range of the camera image
     pixels = np.concatenate(
@@ -172,7 +182,7 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     return pixels
 
 
-def transform_from_pixels_to_world(pixels, depth_map, camera_to_world_transform):
+def transform_from_pixels_to_world(pixels, depth_map, camera_to_world_transform, same_depth_map=False):
     """
     Helper function to take a batch of pixel locations and the corresponding depth image
     and transform these points from the camera frame to the world frame.
@@ -190,6 +200,8 @@ def transform_from_pixels_to_world(pixels, depth_map, camera_to_world_transform)
     # make sure leading dimensions are consistent
     pixels_leading_shape = pixels.shape[:-1]
     depth_map_leading_shape = depth_map.shape[:-3]
+    print("depth_map_leading_shape: ", depth_map_leading_shape)
+    print("pixels_leading_shape: ", pixels_leading_shape)
     assert depth_map_leading_shape == pixels_leading_shape
 
     # sample from the depth map using the pixel locations with bilinear sampling
@@ -241,6 +253,156 @@ def bilinear_interpolate(im, x, y):
     wd = (x - x0) * (y - y0)
 
     return wa * Ia + wb * Ib + wc * Ic + wd * Id
+def get_pointcloud_from_image_and_depth(sim, image, depth_map, camera_name):
+    """
+    Computes a point cloud (H x W x 3) in world coordinates from an image and its depth map.
+
+    Args:
+        sim (MjSim): simulator instance
+        image (np.array): RGB image of shape (H, W, 3)
+        depth_map (np.array): normalized depth image of shape (H, W), values in [0, 1]
+        camera_name (str): name of the camera used
+
+    Returns:
+        world_xyz (np.array): array of shape (H, W, 3) with 3D world coordinates for each pixel
+    """
+    H, W = depth_map.shape
+    def verticalFlip(img):
+        return np.flip(img, axis=0)
+
+    def get_o3d_cammat():
+        cam_mat = get_camera_intrinsic_matrix(sim, camera_name, H, W)
+        cx = cam_mat[0,2]
+        fx = cam_mat[0,0]
+        cy = cam_mat[1,2]
+        fy = cam_mat[1,1]
+        return o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
+
+    rgb = verticalFlip(image)
+    depth = get_real_depth_map(sim, verticalFlip(depth_map))
+    o3d_cammat = get_o3d_cammat()
+    o3d_depth = o3d.geometry.Image(depth)
+    o3d_pcd = o3d.geometry.PointCloud.create_from_depth_image(o3d_depth, o3d_cammat)
+    ### get camera points
+    cam_points = np.asarray(o3d_pcd.points).copy()
+    print("cam_points: ", cam_points[10000:10010])
+    import pdb; pdb.set_trace()
+    world_T_cam = get_camera_extrinsic_matrix(sim, camera_name)
+    o3d_pcd.transform(world_T_cam)
+    points = np.asarray(o3d_pcd.points)
+    colors = rgb.reshape(-1, 3)
+    pcd = np.concatenate([points, colors], axis=1)
+    print("pcd: ", pcd[10000:10010])
+    print("cam_points: ", cam_points[10000:10010])
+    ## 输出红色字 let check
+    print("\033[91m" + "let check" + "\033[0m")
+    import pdb; pdb.set_trace()
+    return pcd,cam_points
+
+    ### print depthmap minmax
+    print("depth_map min: ", depth_map.min())
+    print("depth_map max: ", depth_map.max())
+    import pdb; pdb.set_trace()
+    # real_depth = depth_map
+    real_depth = get_real_depth_map(sim, depth_map)  # (H, W)
+
+    # Intrinsics and extrinsics
+    K = get_camera_intrinsic_matrix(sim, camera_name, H, W)
+    cam_to_world = get_camera_extrinsic_matrix(sim, camera_name)
+
+    # Create meshgrid of pixel coordinates
+    u, v = np.meshgrid(np.arange(W), np.arange(H))  # shape (H, W)
+    u = u.astype(np.float32)
+    v = v.astype(np.float32)
+
+    # Unproject to camera coordinates
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    z = real_depth  # shape (H, W)
+    x = (u - cx) * z / fx
+    y = (v - cy) * z / fy
+    cam_points = np.stack([x, y, z, np.ones_like(z)], axis=-1)  # (H, W, 4)
+    ## visualize the campoints using matplotlib
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    ax.scatter(cam_points[:, :, 0], cam_points[:, :, 1], c=cam_points[:, :, 2])
+    ## save the figure
+    plt.savefig("cam_points.png")
+    # Transform to world coordinates
+    world_points = cam_points @ cam_to_world.T  # shape (H, W, 4)
+    world_xyz = world_points[..., :3]  # (H, W, 3)
+    print("middle camera point: ", cam_points[240, 320, :])
+    print("middle world point: ", world_xyz[240, 320, :])
+    print("middle depth: ", real_depth[240, 320])
+    import pdb; pdb.set_trace()
+    print("MuJoCo cam position:", sim.data.get_camera_xpos(camera_name))
+    print("Transform matrix translation part:", cam_to_world[:3, 3])
+    import pdb; pdb.set_trace()
+    return world_xyz, cam_points
+
+# def generate_pointcloud_from_depth(rgb_image, depth_map, camera_to_world_transform):
+#     """
+#     生成完整的点云数据，将RGB图像和深度图转换为世界坐标系中的3D点云。
+
+#     Args:
+#         rgb_image (np.array): RGB图像，形状为[H, W, 3]
+#         depth_map (np.array): 深度图，形状为[H, W, 1]或[H, W]
+#         camera_to_world_transform (np.array): 4x4变换矩阵，用于从像素坐标转换到世界坐标
+
+#     Returns:
+#         dict: 包含以下键值对:
+#             - 'points': 形状为[N, 3]的点云坐标，其中N=H*W
+#             - 'colors': 形状为[N, 3]的点云RGB颜色值，其中N=H*W
+#     """
+#     # 确保深度图具有正确的形状
+#     if len(depth_map.shape) == 2:
+#         depth_map = depth_map[..., None]  # 添加通道维度
+
+#     # 获取图像尺寸
+#     im_h, im_w = depth_map.shape[:2]
+
+#     # 创建所有像素的坐标网格
+#     y, x = np.mgrid[0:im_h, 0:im_w]
+#     pixels = np.stack([y.flatten(), x.flatten()], axis=-1)  # 形状为[H*W, 2]
+
+#     # 直接实现从像素到世界坐标系的转换（参考transform_from_pixels_to_world函数）
+#     pixels = pixels.astype(float)
+
+#     # 获取每个像素的深度值
+#     z = depth_map.reshape(-1, 1)
+
+#     # 形成4D齐次相机向量 - [x * z, y * z, z, 1]
+#     # (注意，我们需要交换像素的前两个维度，从像素索引转换到相机坐标)
+#     cam_pts = [
+#         pixels[:, 1:2] * z,  # x * z
+#         pixels[:, 0:1] * z,  # y * z
+#         z,                   # z
+#         np.ones_like(z)      # 1
+#     ]
+#     cam_pts = np.concatenate(cam_pts, axis=-1)  # 形状为[H*W, 4]
+
+#     # 批量矩阵乘法，将4x4矩阵和4x1向量相乘，实现从相机坐标系到世界坐标系的转换
+#     points_3d = np.matmul(camera_to_world_transform, cam_pts.T).T  # 形状为[H*W, 4]
+#     points_3d = points_3d[:, :3]  # 只保留前3个元素，形状为[H*W, 3]
+
+#     # 获取每个点的RGB颜色
+#     colors = rgb_image.reshape(-1, 3)
+
+#     # 过滤掉无效的点（深度为0或无穷大的点）
+#     valid_mask = ~np.isnan(points_3d).any(axis=-1) & ~np.isinf(points_3d).any(axis=-1)
+#     if depth_map.size > 0:
+#         depth_values = depth_map.flatten()
+#         valid_depth = (depth_values > 0) & np.isfinite(depth_values)
+#         valid_mask = valid_mask & valid_depth
+
+#     # 应用掩码
+#     valid_points = points_3d[valid_mask]
+#     valid_colors = colors[valid_mask]
+
+#     return {
+#         'points': valid_points,  # 形状为[N, 3]
+#         'colors': valid_colors   # 形状为[N, 3]
+#     }
 
 
 class CameraMover:
@@ -418,211 +580,212 @@ class CameraMover:
         return camera_pos, camera_quat
 
 
-class DemoPlaybackCameraMover(CameraMover):
-    """
-    A class for playing back demonstrations and recording the resulting frames with the flexibility of a mobile camera
-    that can be set manually or panned automatically frame-by-frame
+# class DemoPlaybackCameraMover(CameraMover):
+#     """
+#     A class for playing back demonstrations and recording the resulting frames with the flexibility of a mobile camera
+#     that can be set manually or panned automatically frame-by-frame
 
-    Note: domain randomization is also supported for playback!
+#     Note: domain randomization is also supported for playback!
 
-    Args:
-        demo (str): absolute fpath to .hdf5 demo
-        env_config (None or dict): (optional) values to override inferred environment information from demonstration.
-            (e.g.: camera h / w, depths, segmentations, etc...)
-            Any value not specified will be inferred from the extracted demonstration metadata
-            Note that there are some specific arguments that MUST be set a certain way, if any of these values
-            are specified with @env_config, an error will be raised
-        replay_from_actions (bool): If True, will replay demonstration's actions. Otherwise, replays will be hardcoded
-            from the demonstration states
-        visualize_sites (bool): If True, will visualize sites during playback. Note that this CANNOT be paired
-            simultaneously with camera segmentations
-        camera (str): Which camera to mobilize during playback, e.g.: frontview, agentview, etc.
-        init_camera_pos (None or 3-array): If specified, should be the (x,y,z) global cartesian pos to
-            initialize camera to
-        init_camera_quat (None or 4-array): If specified, should be the (x,y,z,w) global quaternion orientation to
-            initialize camera to
-        use_dr (bool): If True, will use domain randomization during playback
-        dr_args (None or dict): If specified, will set the domain randomization wrapper arguments if using dr
-    """
+#     Args:
+#         demo (str): absolute fpath to .hdf5 demo
+#         env_config (None or dict): (optional) values to override inferred environment information from demonstration.
+#             (e.g.: camera h / w, depths, segmentations, etc...)
+#             Any value not specified will be inferred from the extracted demonstration metadata
+#             Note that there are some specific arguments that MUST be set a certain way, if any of these values
+#             are specified with @env_config, an error will be raised
+#         replay_from_actions (bool): If True, will replay demonstration's actions. Otherwise, replays will be hardcoded
+#             from the demonstration states
+#         visualize_sites (bool): If True, will visualize sites during playback. Note that this CANNOT be paired
+#             simultaneously with camera segmentations
+#         camera (str): Which camera to mobilize during playback, e.g.: frontview, agentview, etc.
+#         init_camera_pos (None or 3-array): If specified, should be the (x,y,z) global cartesian pos to
+#             initialize camera to
+#         init_camera_quat (None or 4-array): If specified, should be the (x,y,z,w) global quaternion orientation to
+#             initialize camera to
+#         use_dr (bool): If True, will use domain randomization during playback
+#         dr_args (None or dict): If specified, will set the domain randomization wrapper arguments if using dr
+#     """
 
-    def __init__(
-        self,
-        demo,
-        env_config=None,
-        replay_from_actions=False,
-        visualize_sites=False,
-        camera="frontview",
-        init_camera_pos=None,
-        init_camera_quat=None,
-        use_dr=False,
-        dr_args=None,
-    ):
-        # Store relevant values and initialize other values
-        self.camera_id = None
-        self.replay_from_actions = replay_from_actions
-        self.states = None
-        self.actions = None
-        self.step = None
-        self.n_steps = None
-        self.current_ep = None
-        self.started = False
+#     def __init__(
+#         self,
+#         demo,
+#         env_config=None,
+#         replay_from_actions=False,
+#         visualize_sites=False,
+#         camera="frontview",
+#         init_camera_pos=None,
+#         init_camera_quat=None,
+#         use_dr=False,
+#         dr_args=None,
+#     ):
+#         # Store relevant values and initialize other values
+#         self.camera_id = None
+#         self.replay_from_actions = replay_from_actions
+#         self.states = None
+#         self.actions = None
+#         self.step = None
+#         self.n_steps = None
+#         self.current_ep = None
+#         self.started = False
 
-        # Load the demo
-        self.f = h5py.File(demo, "r")
+#         # Load the demo
+#         self.f = h5py.File(demo, "r")
 
-        # Extract relevant info
-        env_info = json.loads(self.f["data"].attrs["env_info"])
+#         # Extract relevant info
+#         env_info = json.loads(self.f["data"].attrs["env_info"])
 
-        # Construct default env arguments
-        default_args = {
-            "has_renderer": False,
-            "has_offscreen_renderer": True,
-            "ignore_done": True,
-            "use_camera_obs": True,
-            "reward_shaping": True,
-            "hard_reset": False,
-            "camera_names": camera,
-        }
+#         # Construct default env arguments
+#         default_args = {
+#             "has_renderer": False,
+#             "has_offscreen_renderer": True,
+#             "ignore_done": True,
+#             "use_camera_obs": True,
+#             "reward_shaping": True,
+#             "hard_reset": False,
+#             "camera_names": camera,
+#         }
 
-        # If custom env_config is specified, make sure that there's no overlap with default args and merge with config
-        if env_config is not None:
-            for k in env_config.keys():
-                assert k not in default_args, f"Key {k} cannot be specified in env_config!"
-            env_info.update(env_config)
+#         # If custom env_config is specified, make sure that there's no overlap with default args and merge with config
+#         if env_config is not None:
+#             for k in env_config.keys():
+#                 assert k not in default_args, f"Key {k} cannot be specified in env_config!"
+#             env_info.update(env_config)
 
-        # Merge in default args
-        env_info.update(default_args)
+#         # Merge in default args
+#         env_info.update(default_args)
 
-        # Create env
-        env = robosuite.make(**env_info)
+#         # Create env
+#         env = robosuite.make(**env_info)
 
-        # Optionally wrap with visualization wrapper
-        if visualize_sites:
-            env = VisualizationWrapper(env=self.env)
+#         # Optionally wrap with visualization wrapper
+#         if visualize_sites:
+#             env = VisualizationWrapper(env=self.env)
 
-        # Optionally use domain randomization if specified
-        self.use_dr = use_dr
-        if self.use_dr:
-            default_dr_args = {
-                "seed": 1,
-                "randomize_camera": False,
-                "randomize_every_n_steps": 10,
-            }
-            default_dr_args.update(dr_args)
-            env = DomainRandomizationWrapper(
-                env=self.env,
-                **default_dr_args,
-            )
+#         # Optionally use domain randomization if specified
+#         self.use_dr = use_dr
+#         if self.use_dr:
+#             default_dr_args = {
+#                 "seed": 1,
+#                 "randomize_camera": False,
+#                 "randomize_every_n_steps": 10,
+#             }
+#             default_dr_args.update(dr_args)
+#             env = DomainRandomizationWrapper(
+#                 env=self.env,
+#                 **default_dr_args,
+#             )
 
-        # list of all demonstrations episodes
-        self.demos = list(self.f["data"].keys())
+#         # list of all demonstrations episodes
+#         self.demos = list(self.f["data"].keys())
 
-        # Run super init
-        super().__init__(
-            env=env,
-            camera=camera,
-            init_camera_pos=init_camera_pos,
-            init_camera_quat=init_camera_quat,
-        )
+#         # Run super init
+#         super().__init__(
+#             env=env,
+#             camera=camera,
+#             init_camera_pos=init_camera_pos,
+#             init_camera_quat=init_camera_quat,
+#         )
 
-        # Load episode 0 by default
-        self.load_episode_xml(demo_num=0)
+#         # Load episode 0 by default
+#         self.load_episode_xml(demo_num=0)
 
-    def load_episode_xml(self, demo_num):
-        """
-        Loads demo episode with specified @demo_num into the simulator.
+#     def load_episode_xml(self, demo_num):
+#         """
+#         Loads demo episode with specified @demo_num into the simulator.
 
-        Args:
-            demo_num (int): Demonstration number to load
-        """
-        # Grab raw xml file
-        ep = self.demos[demo_num]
-        model_xml = self.f[f"data/{ep}"].attrs["model_file"]
+#         Args:
+#             demo_num (int): Demonstration number to load
+#         """
+#         # Grab raw xml file
+#         ep = self.demos[demo_num]
+#         model_xml = self.f[f"data/{ep}"].attrs["model_file"]
 
-        # Reset environment
-        self.env.reset()
-        xml = self.env.edit_model_xml(model_xml)
-        xml = self.modify_xml_for_camera_movement(xml, camera_name=self.camera)
-        self.env.reset_from_xml_string(xml)
-        self.env.sim.reset()
+#         # Reset environment
+#         self.env.reset()
+#         xml = self.env.edit_model_xml(model_xml)
+#         xml = self.modify_xml_for_camera_movement(xml, camera_name=self.camera)
+#         self.env.reset_from_xml_string(xml)
+#         self.env.sim.reset()
 
-        # Update camera info
-        self.camera_id = self.env.sim.model.camera_name2id(self.camera)
+#         # Update camera info
+#         self.camera_id = self.env.sim.model.camera_name2id(self.camera)
 
-        # Load states and actions
-        self.states = self.f[f"data/{ep}/states"].value
-        self.actions = np.array(self.f[f"data/{ep}/actions"].value)
+#         # Load states and actions
+#         self.states = self.f[f"data/{ep}/states"].value
+#         self.actions = np.array(self.f[f"data/{ep}/actions"].value)
 
-        # Set initial state
-        self.env.sim.set_state_from_flattened(self.states[0])
+#         # Set initial state
+#         self.env.sim.set_state_from_flattened(self.states[0])
 
-        # Reset step count and set current episode number
-        self.step = 0
-        self.n_steps = len(self.actions)
-        self.current_ep = demo_num
+#         # Reset step count and set current episode number
+#         self.step = 0
+#         self.n_steps = len(self.actions)
+#         self.current_ep = demo_num
 
-        # Notify user of loaded episode
-        print(f"Loaded episode {demo_num}.")
+#         # Notify user of loaded episode
+#         print(f"Loaded episode {demo_num}.")
 
-    def grab_next_frame(self):
-        """
-        Grabs the next frame in the demo sequence by stepping the simulation and returning the resulting value(s)
+#     def grab_next_frame(self):
+#         """
+#         Grabs the next frame in the demo sequence by stepping the simulation and returning the resulting value(s)
 
-        Returns:
-            dict: Keyword-mapped np.arrays from the demonstration sequence, corresponding to all image modalities used
-                in the playback environment (e.g.: "image", "depth", "segmentation_instance")
-        """
-        # Make sure the episode isn't completed yet, if so, we load the next episode
-        if self.step == self.n_steps:
-            self.load_episode_xml(demo_num=self.current_ep + 1)
+#         Returns:
+#             dict: Keyword-mapped np.arrays from the demonstration sequence, corresponding to all image modalities used
+#                 in the playback environment (e.g.: "image", "depth", "segmentation_instance")
+#         """
+#         # Make sure the episode isn't completed yet, if so, we load the next episode
+#         if self.step == self.n_steps:
+#             self.load_episode_xml(demo_num=self.current_ep + 1)
 
-        # Step the environment and grab obs
-        if self.replay_from_actions:
-            obs, _, _, _ = self.env.step(self.actions[self.step])
-        else:  # replay from states
-            self.env.sim.set_state_from_flattened(self.states[self.step + 1])
-            if self.use_dr:
-                self.env.step_randomization()
-            self.env.sim.forward()
-            obs = self.env._get_observation()
+#         # Step the environment and grab obs
+#         if self.replay_from_actions:
+#             obs, _, _, _ = self.env.step(self.actions[self.step])
+#         else:  # replay from states
+#             self.env.sim.set_state_from_flattened(self.states[self.step + 1])
+#             if self.use_dr:
+#                 self.env.step_randomization()
+#             self.env.sim.forward()
+#             obs = self.env._get_observation()
 
-        # Increment the step counter
-        self.step += 1
+#         # Increment the step counter
+#         self.step += 1
 
-        # Return all relevant frames
-        return {k.split(f"{self.camera}_")[-1]: obs[k] for k in obs if self.camera in k}
+#         # Return all relevant frames
+#         return {k.split(f"{self.camera}_")[-1]: obs[k] for k in obs if self.camera in k}
 
-    def grab_episode_frames(self, demo_num, pan_point=(0, 0, 0.8), pan_axis=(0, 0, 1), pan_rate=0.01):
-        """
-        Playback entire episode @demo_num, while optionally rotating the camera about point @pan_point and
-            axis @pan_axis if @pan_rate > 0
+#     def grab_episode_frames(self, demo_num, pan_point=(0, 0, 0.8), pan_axis=(0, 0, 1), pan_rate=0.01):
+#         """
+#         Playback entire episode @demo_num, while optionally rotating the camera about point @pan_point and
+#             axis @pan_axis if @pan_rate > 0
 
-        Args:
-            demo_num (int): Demonstration episode number to load for playback
-            pan_point (3-array): (x,y,z) cartesian coordinates about which to rotate camera in camera frame
-            pan_direction (3-array): (ax,ay,az) axis about which to rotate camera in camera frame
-            pan_rate (float): how quickly to pan camera if not 0
+#         Args:
+#             demo_num (int): Demonstration episode number to load for playback
+#             pan_point (3-array): (x,y,z) cartesian coordinates about which to rotate camera in camera frame
+#             pan_direction (3-array): (ax,ay,az) axis about which to rotate camera in camera frame
+#             pan_rate (float): how quickly to pan camera if not 0
 
-        Returns:
-            dict: Keyword-mapped stacked np.arrays from the demonstration sequence, corresponding to all image
-                modalities used in the playback environment (e.g.: "image", "depth", "segmentation_instance")
+#         Returns:
+#             dict: Keyword-mapped stacked np.arrays from the demonstration sequence, corresponding to all image
+#                 modalities used in the playback environment (e.g.: "image", "depth", "segmentation_instance")
 
-        """
-        # First, load env
-        self.load_episode_xml(demo_num=demo_num)
+#         """
+#         # First, load env
+#         self.load_episode_xml(demo_num=demo_num)
 
-        # Initialize dict to return
-        obs = self.env._get_observation()
-        frames_dict = {k.split(f"{self.camera}_")[-1]: [] for k in obs if self.camera in k}
+#         # Initialize dict to return
+#         obs = self.env._get_observation()
+#         frames_dict = {k.split(f"{self.camera}_")[-1]: [] for k in obs if self.camera in k}
 
-        # Continue to loop playback steps while there are still frames left in the episode
-        while self.step < self.n_steps:
-            # Take playback step and add frames
-            for k, frame in self.grab_next_frame().items():
-                frames_dict[k].append(frame)
+#         # Continue to loop playback steps while there are still frames left in the episode
+#         while self.step < self.n_steps:
+#             # Take playback step and add frames
+#             for k, frame in self.grab_next_frame().items():
+#                 frames_dict[k].append(frame)
 
-            # Update camera pose
-            self.rotate_camera(point=pan_point, axis=pan_axis, angle=pan_rate)
+#             # Update camera pose
+#             self.rotate_camera(point=pan_point, axis=pan_axis, angle=pan_rate)
 
-        # Stack all frames and return
-        return {k: np.stack(frames) for k, frames in frames_dict.items()}
+#         # Stack all frames and return
+#         return {k: np.stack(frames) for k, frames in frames_dict.items()}
+

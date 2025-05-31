@@ -148,6 +148,10 @@ class MujocoObject(MujocoModel):
         self._contact_geoms = [e.get("name") for e in _elements.get("contact_geoms", [])]
         self._visual_geoms = [e.get("name") for e in _elements.get("visual_geoms", [])]
 
+
+        # print(self._visual_geoms)
+        # print(self._contact_geoms)
+        # import pdb; pdb.set_trace()
         # Add default materials if we're using domain randomization
         if macros.USING_INSTANCE_RANDOMIZATION:
             tex_element, mat_element, _, used = add_material(root=self.get_obj(), naming_prefix=self.naming_prefix)

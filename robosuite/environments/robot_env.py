@@ -367,6 +367,8 @@ class RobotEnv(MujocoEnv):
 
             # Create observables for these cameras
             for name, s in zip(names, sensors):
+                print("add_observable : ",name)
+                # import pdb; pdb.set_trace()
                 observables[name] = Observable(
                     name=name,
                     sensor=s,

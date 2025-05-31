@@ -231,7 +231,8 @@ class CustomMaterial(object):
                 tex.save(fpath, "PNG")
                 # Link this texture file to the default texture dict
                 self.tex_attrib["file"] = fpath
-
+        # print(self.tex_attrib["file"])
+        # import pdb; pdb.set_trace()
 
 def xml_path_completion(xml_path, root=None):
     """

@@ -257,12 +257,17 @@ class UniformRandomSampler(ObjectPositionSampler):
                 base_offset.shape[0] == 3
             ), "Invalid reference received. Should be (x,y,z) 3-tuple, but got: {}".format(base_offset)
 
+
+        # print(self.mujoco_objects, end=" mujoco_objects\n")
+        # import pdb; pdb.set_trace()
+
         # Sample pos and quat for all objects assigned to this sampler
         for obj in self.mujoco_objects:
             # First make sure the currently sampled object hasn't already been sampled
             assert obj.name not in placed_objects, "Object '{}' has already been sampled!".format(obj.name)
 
             horizontal_radius = obj.horizontal_radius
+            print(horizontal_radius, end=" horizontal_radius\n")
             bottom_offset = obj.bottom_offset
             success = False
             for i in range(5000):  # 5000 retries
@@ -296,7 +301,7 @@ class UniformRandomSampler(ObjectPositionSampler):
                     placed_objects[obj.name] = (pos, quat, obj)
                     success = True
                     break
-
+            print("successfully placed object", obj.name)
             if not success:
                 raise RandomizationError("Cannot place all objects ):")
 
