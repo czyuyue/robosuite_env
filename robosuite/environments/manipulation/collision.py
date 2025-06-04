@@ -605,6 +605,10 @@ class Collision(ManipulationEnv):
     def get_pcd_from_rgbd(self, cam_name, rgb, depth):
         def verticalFlip(img):
             return np.flip(img, axis=0)
+        
+        def rotate_180(img):
+            temp = np.flip(img, axis=0)
+            return np.flip(temp, axis=1)
 
         def get_o3d_cammat():
             cam_mat = self.env.get_camera_intrinsic_matrix(cam_name, self.cam_width, self.cam_height)
@@ -614,8 +618,10 @@ class Collision(ManipulationEnv):
             fy = cam_mat[1,1]
             return o3d.camera.PinholeCameraIntrinsic(self.cam_width, self.cam_height, fx, fy, cx, cy)
 
-        rgb = verticalFlip(rgb)
-        depth = self.env.get_real_depth_map(verticalFlip(depth))
+        # rgb = verticalFlip(rgb)
+        rgb = rotate_180(rgb) 
+        # depth = self.env.get_real_depth_map(verticalFlip(depth))
+        depth = self.env.get_real_depth_map(rotate_180(depth))
         o3d_cammat = get_o3d_cammat()
         o3d_depth = o3d.geometry.Image(depth)
         o3d_pcd = o3d.geometry.PointCloud.create_from_depth_image(o3d_depth, o3d_cammat)

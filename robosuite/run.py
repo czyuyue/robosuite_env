@@ -1,6 +1,9 @@
+import os
+robotsuite_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.sys.path.append(robotsuite_dir)
+
 import numpy as np
 import robosuite as suite
-import os
 import imageio
 import cv2
 from scipy.spatial.transform import Rotation as R
@@ -88,7 +91,7 @@ def calculate_table_orientation(direction_xy, format='xyzw'):
 
     # Convert to desired format
     print(f"quat_xyzw: {quat_xyzw}")
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
     if format.lower() == 'wxyz':
         return np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
@@ -112,6 +115,7 @@ def orientation_control(current_quat, target_quat, gain=2.0):
 
     # 应用增益 - 这会同时缩放角度大小，保持旋转轴方向不变
     return gain * rotvec
+
 class ScriptedPolicy:
     def __init__(self, env):
         self.env = env
@@ -260,9 +264,9 @@ class ScriptedPolicy:
             # 计算位置误差
             pos_error = target_pos - current_pos
             pos_error_norm = np.linalg.norm(pos_error)
-            print(f"current_pos: {current_pos}, current_quat: {current_quat}")
-            print(f"target_pos: {target_pos}, target_quat: {target_quat}")
-            print(f"last_error: {last_error}, pos_error: {pos_error}")
+            # print(f"current_pos: {current_pos}, current_quat: {current_quat}")
+            # print(f"target_pos: {target_pos}, target_quat: {target_quat}")
+            # print(f"last_error: {last_error}, pos_error: {pos_error}")
             # import pdb; pdb.set_trace()
             # 计算方向误差 (四元数差)
             quat_error = quaternion_distance(current_quat, target_quat)
@@ -299,7 +303,7 @@ class ScriptedPolicy:
         target_quat = self.target_quat
         self.move_to_pose(env, target_pos, target_quat, orient_only=True)
         print("\033[92mrotate to the target direction\033[0m")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         ### first move up to 1.1m
         obs = env._get_observations()
         ee_pos = self._get_end_effector_pos(obs)
@@ -307,7 +311,7 @@ class ScriptedPolicy:
         target_quat = self._get_end_effector_ori(obs)
         self.move_to_pose(env, target_pos, target_quat, pos_only=True)
         print("\033[92mmove up to 1.1m\033[0m")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # return
 
         # return
@@ -318,7 +322,7 @@ class ScriptedPolicy:
         target_pos[2] = 1.1
         self.move_to_pose(env, target_pos, target_quat, pos_only=True)
         print("\033[92mmove above the target position\033[0m")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         ### then lower down
         obs = env._get_observations()
         obj_pos = self._get_object_pos(obs)
@@ -326,7 +330,7 @@ class ScriptedPolicy:
         target_pos[2] = 0.809
         self.move_to_pose(env, target_pos, target_quat, pos_only=True)
         print("\033[92mmove to the target position lower down\033[0m")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
 
         ### then push the object
@@ -334,7 +338,7 @@ class ScriptedPolicy:
         target_pos[2] = 0.809
         self.move_to_pose(env, target_pos, target_quat, pos_only=True)
         print("\033[92mpush the object\033[0m")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         ### move up
         obs = env._get_observations()
@@ -351,8 +355,10 @@ class ScriptedPolicy:
 
         print(f"saving video to {video_path}")
         ## save /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite/robosuite_videos/
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         imageio.mimsave(video_path, self.frames, fps=20)
+        
+        
 # 配置控制器
 env = suite.make(
     env_name="Collision",  # 尝试简单的抓取任务
@@ -372,7 +378,7 @@ env = DataCollectionWrapper(env, "robosuite_data/robosuite/data/collision_data")
 
 ### 输出当前目录
 print(f"current directory: {os.getcwd()}")
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 
 # 创建保存视频的目录
@@ -381,7 +387,7 @@ os.makedirs(video_dir, exist_ok=True)
 video_path = os.path.join(video_dir, "robosuite_test.mp4")
 # env.unset_ep_meta()
 # 重置环境
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 obs = env.reset()
 print(obs.keys(), end=" obs.keys\n")
 obs = env._get_observations()
@@ -401,7 +407,7 @@ frames = []
 ### push the first object to the second object
 policy = ScriptedPolicy(env)
 print(obs.keys(), end=" obs.keys\n")
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 first_object = env.objects_name[0]
 second_object = env.objects_name[1]
@@ -409,7 +415,7 @@ second_object = env.objects_name[1]
 agent_view_image = obs["agentview_image"]
 imageio.imwrite("agent_view_image.png", agent_view_image)
 # print(f" push {first_object} to {second_object} !!!!!!!!!!")
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 
 first_object_pos = obs[first_object + "_pos"]
@@ -426,6 +432,7 @@ policy.execute_policy(env)
 policy.save_video(video_path)
 env.close()
 exit(0)
+
 for i in range(2):
     ##  choose 2 different objects indices
     perm = np.random.permutation(len(env.objects_name))

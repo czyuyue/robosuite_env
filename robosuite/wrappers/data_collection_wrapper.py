@@ -49,55 +49,55 @@ def pixel_to_3d_with_depth(pixel_coord, depth, camera_matrix, camera_pose):
 
     return point_world
 
-def example_usage():
-    """
-    示例用法
-    """
-    # 示例相机内参矩阵
-    K1 = np.array([
-        [800, 0, 320],
-        [0, 800, 240],
-        [0, 0, 1]
-    ])
+# def example_usage():
+#     """
+#     示例用法
+#     """
+#     # 示例相机内参矩阵
+#     K1 = np.array([
+#         [800, 0, 320],
+#         [0, 800, 240],
+#         [0, 0, 1]
+#     ])
 
-    K2 = np.array([
-        [800, 0, 320],
-        [0, 800, 240],
-        [0, 0, 1]
-    ])
+#     K2 = np.array([
+#         [800, 0, 320],
+#         [0, 800, 240],
+#         [0, 0, 1]
+#     ])
 
-    K3 = np.array([
-        [800, 0, 320],
-        [0, 800, 240],
-        [0, 0, 1]
-    ])
+#     K3 = np.array([
+#         [800, 0, 320],
+#         [0, 800, 240],
+#         [0, 0, 1]
+#     ])
 
-    # 示例相机外参矩阵
-    R1 = np.eye(3)
-    t1 = np.array([0, 0, 0])
-    T1 = np.vstack([np.hstack([R1, t1.reshape(3, 1)]), [0, 0, 0, 1]])
+#     # 示例相机外参矩阵
+#     R1 = np.eye(3)
+#     t1 = np.array([0, 0, 0])
+#     T1 = np.vstack([np.hstack([R1, t1.reshape(3, 1)]), [0, 0, 0, 1]])
 
-    R2 = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
-    t2 = np.array([1, 0, 0])
-    T2 = np.vstack([np.hstack([R2, t2.reshape(3, 1)]), [0, 0, 0, 1]])
+#     R2 = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
+#     t2 = np.array([1, 0, 0])
+#     T2 = np.vstack([np.hstack([R2, t2.reshape(3, 1)]), [0, 0, 0, 1]])
 
-    R3 = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-    t3 = np.array([0, 1, 0])
-    T3 = np.vstack([np.hstack([R3, t3.reshape(3, 1)]), [0, 0, 0, 1]])
+#     R3 = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+#     t3 = np.array([0, 1, 0])
+#     T3 = np.vstack([np.hstack([R3, t3.reshape(3, 1)]), [0, 0, 0, 1]])
 
-    # 示例像素坐标
-    pixel1 = [320, 240]  # 相机1的像素坐标
-    pixel2 = [320, 240]  # 相机2的像素坐标
-    pixel3 = [320, 240]  # 相机3的像素坐标
+#     # 示例像素坐标
+#     pixel1 = [320, 240]  # 相机1的像素坐标
+#     pixel2 = [320, 240]  # 相机2的像素坐标
+#     pixel3 = [320, 240]  # 相机3的像素坐标
 
-    # 调用函数
-    point_3d = pixel_to_3d(
-        [pixel1, pixel2, pixel3],
-        [K1, K2, K3],
-        [T1, T2, T3]
-    )
+#     # 调用函数
+#     point_3d = pixel_to_3d(
+#         [pixel1, pixel2, pixel3],
+#         [K1, K2, K3],
+#         [T1, T2, T3]
+#     )
 
-    print(f"3D点坐标: {point_3d}")
+#     print(f"3D点坐标: {point_3d}")
 
 def example_usage_with_depth():
     """
@@ -124,7 +124,7 @@ def example_usage_with_depth():
     print(f"3D点坐标: {point_3d}")
 
 class DataCollectionWrapper(Wrapper):
-    def __init__(self, env, directory, collect_freq=1, flush_freq=100):
+    def __init__(self, env, directory, collect_freq=1, flush_freq=100, env_id=0):
         """
         Initializes the data collection wrapper.
 
@@ -135,6 +135,8 @@ class DataCollectionWrapper(Wrapper):
             flush_freq (int): How frequently to dump data to disk, in terms of environment steps.
         """
         super().__init__(env)
+        
+        self.env_id = env_id  # environment ID for multi-env setups
 
         # the base directory for all logging
         self.directory = directory
@@ -142,6 +144,7 @@ class DataCollectionWrapper(Wrapper):
         # in-memory cache for simulation states and action info
         self.states = []
         self.action_infos = []  # stores information about actions taken
+        self.keypoints_pos = []  # stores keypoint positions
         self.successful = False  # stores success state of demonstration
 
         # how often to save simulation state, in terms of environment steps
@@ -176,7 +179,7 @@ class DataCollectionWrapper(Wrapper):
         ### get camera position
 
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         #### i want to test the transform_from_pixels_to_world function
         # pixel = np.array([320, 240])  # 图像中心点
@@ -245,7 +248,7 @@ class DataCollectionWrapper(Wrapper):
 
         # create a directory with a timestamp
         t1, t2 = str(time.time()).split(".")
-        self.ep_directory = os.path.join(self.directory, "ep_{}_{}".format(t1, t2))
+        self.ep_directory = os.path.join(self.directory, "ep_id{}_{}".format(self.env_id, t1))
         assert not os.path.exists(self.ep_directory)
         print("DataCollectionWrapper: making folder at {}".format(self.ep_directory))
         os.makedirs(self.ep_directory)
@@ -270,7 +273,7 @@ class DataCollectionWrapper(Wrapper):
         """
         print("flush????\n")
         t1, t2 = str(time.time()).split(".")
-        state_path = os.path.join(self.ep_directory, "state_{}_{}.npz".format(t1, t2))
+        state_path = os.path.join(self.ep_directory, "state_id{}_{}.npz".format(self.env_id, t1))
         if hasattr(self.env, "unwrapped"):
             env_name = self.env.unwrapped.__class__.__name__
         else:
@@ -282,10 +285,12 @@ class DataCollectionWrapper(Wrapper):
             states=np.array(self.states),
             action_infos=self.action_infos,
             successful=self.successful,
+            keypoint_positions=np.array(self.keypoints_pos),
             env=env_name,
         )
         self.states = []
         self.action_infos = []
+        self.keypoints_pos = []
         self.successful = False
 
     def register_keypoints(self, keypoints):
@@ -303,7 +308,8 @@ class DataCollectionWrapper(Wrapper):
         self._keypoint_registry = dict()
         self._keypoint2object = dict()
         # 不考虑这些物体作为关键点关联对象
-        exclude_names = ['wall', 'floor', 'fixed', 'table', 'robot', 'target']
+        # exclude_names = ['wall', 'floor', 'fixed', 'table', 'robot', 'target']
+        exclude_names = []
 
         # 获取所有几何体的ID和名称
         geom_ids = []
@@ -450,15 +456,23 @@ class DataCollectionWrapper(Wrapper):
         ## project the keypoints to the image
         ## 使用相机内参矩阵和外参矩阵将关键点投影到图像上
         world_to_camera_transform = get_camera_extrinsic_matrix(self.env.sim, "agentview")
+        print("world_to_camera_transform: ", world_to_camera_transform)
         K = get_camera_intrinsic_matrix(self.env.sim, "agentview",480,640)
         points_2d = project_points_from_world_to_camera(keypoints, world_to_camera_transform,480,640, K)
-        print("points_2d: ", points_2d)
-        import pdb; pdb.set_trace()
+        print("points_2d: ", points_2d[0][:100])
+        if len(points_2d.shape) > 2:
+            points_2d = points_2d.squeeze()
+        # import pdb; pdb.set_trace()
         ## 绘制关键点
         ## flip the image vertically
         image = cv2.flip(image, 0)
+        ## flip the image horizontally
+        image = cv2.flip(image, 1)
+        
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         for point in points_2d:
-            cv2.circle(image, (int(point[0]), int(point[1])), 5, (0, 0, 255), -1)
+            # print("point: ", point)
+            cv2.circle(image, (int(point[1]), int(point[0])), 5, (0, 0, 255), -1)
         ## save the image
         cv2.imwrite("keypoints.png", image)
 
@@ -492,7 +506,7 @@ class DataCollectionWrapper(Wrapper):
         print("self._pixels: ", self._pixels.shape)
         print("self._depths: ", self._depths.shape)
         print("HERE!!!!\n")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
 
 
@@ -519,11 +533,11 @@ class DataCollectionWrapper(Wrapper):
         K = get_camera_intrinsic_matrix(self.env.sim, "agentview",480,640)
         pixels = project_points_from_world_to_camera(middle_point.reshape(1, 3), world_to_camera_transform,480,640, K)
         print("pixels transformed from middle point: ", pixels)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
 
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         print("type of points_3d: ", type(points_3d))
         print("dtype of points_3d: ", points_3d.dtype)
@@ -533,16 +547,16 @@ class DataCollectionWrapper(Wrapper):
         print("points_3d.max(): ", points_3d.max(axis=0))
 
         import sys
-        sys.path.append("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+        sys.path.append("/home/yunzhe/robosuite_env/robosuite")
         from visualizer import visualize_ndarray
-        visualize_ndarray(points_3d, colors=None, output_dir="pointcloud_visualizer", port=8000, max_points=100000, point_size=0.002)
+        # visualize_ndarray(points_3d, colors=None, output_dir="pointcloud_visualizer", port=8000, max_points=100000, point_size=0.002)
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         print(f"current directory: {os.getcwd()}")
         ## 将当前目录设置为 /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite
-        os.chdir("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+        os.chdir("/home/yunzhe/robosuite_env/robosuite")
         print(f"current directory: {os.getcwd()}")
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         ###  visualize the points_3d using cv2
         ## dont use open3d
         import matplotlib.pyplot as plt
@@ -567,14 +581,21 @@ class DataCollectionWrapper(Wrapper):
         points_3d = points_3d[::20, ::20, :]
         ## flatten
         points_3d = points_3d.reshape(-1, 3)
+        
+        # filter with bounds
+        bounds_min = [-0.35, -0.5, 0.3]
+        bounds_max = [0.3, 0.5, 1.0]
+        points_3d = points_3d[
+            (points_3d[:, 0] >= bounds_min[0]) & (points_3d[:, 0] <= bounds_max[0]) &
+            (points_3d[:, 1] >= bounds_min[1]) & (points_3d[:, 1] <= bounds_max[1]) &
+            (points_3d[:, 2] >= bounds_min[2]) & (points_3d[:, 2] <= bounds_max[2])
+        ]
+        print("points_3d after filtering: ", points_3d.shape)
 
-
-
-        print("points_3d: ", points_3d.shape)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         self.register_keypoints(points_3d)
         self.render_with_keypoints()
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         return ret
 
     def step(self, action):
@@ -613,6 +634,9 @@ class DataCollectionWrapper(Wrapper):
                 info["actions_abs"] = np.array(step_info["action_abs"])
 
             self.action_infos.append(info)
+            
+            keypoints_pos = self.get_keypoint_positions()
+            self.keypoints_pos.append(keypoints_pos)
 
         # check if the demonstration is successful
         if self.env._check_success():

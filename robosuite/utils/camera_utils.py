@@ -146,6 +146,7 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     assert len(world_to_camera_transform.shape) == 2
     assert world_to_camera_transform.shape[0] == 4 and world_to_camera_transform.shape[1] == 4
 
+    print("cam_points before pad: ", points.reshape(-1, 3)[:100])
     # convert points to homogenous coordinates -> (px, py, pz, 1)
     ones_pad = np.ones(points.shape[:-1] + (1,))
     points = np.concatenate((points, ones_pad), axis=-1)  # shape [..., 4]
@@ -153,22 +154,29 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     # batch matrix multiplication of 4 x 4 matrix and 4 x 1 vectors to do robot frame to pixels transform
     mat_reshape = [1] * len(points.shape[:-1]) + [4, 4]
     cam_trans = world_to_camera_transform.reshape(mat_reshape)  # shape [..., 4, 4]
+    transposed_cam_trans = world_to_camera_transform.T.reshape(mat_reshape)  # shape [..., 4, 4]
+    transposed_world2camera_transform = np.linalg.inv(world_to_camera_transform).T.reshape(mat_reshape)  # shape [..., 4, 4]
 
     # re-scaling from homogenous coordinates to recover pixel values
     # (x, y, z) -> (x / z, y / z)
     ## transform points to camera frame
-    cam_points = points @ cam_trans.T
+    cam_points = points @ transposed_world2camera_transform # transposed_cam_trans
+    cam_points = cam_points[..., :3] / cam_points[..., 3:4]  # shape [..., 3]
+    cam_points = cam_points.reshape(*cam_points.shape[:-1], 3)
 
-    print("cam_points: ", cam_points[10000:10010])
+    print("cam_points: ", cam_points[0][:100])
+    cam_points = cam_points / cam_points[..., 2:3]
+    print("intrinsics: ", K)
     ## red let check
     print("\033[91m" + "let check" + "\033[0m")
-    import pdb; pdb.set_trace()
-    pixels = np.matmul(K, cam_points)[..., 0]
-    pixels = pixels / pixels[..., 2:3]
+    # import pdb; pdb.set_trace()
+    pixels = np.matvec(K, cam_points)  # shape [..., 3]
+    print("pixels before rescale: ", pixels[0][:100])
+    # pixels = pixels[:2]
     pixels = pixels[..., :2].round().astype(int)  # shape [..., 2]
 
-    print("pixels: ", pixels)
-    import pdb; pdb.set_trace()
+    print("pixels: ", pixels[0][:100])
+    # import pdb; pdb.set_trace()
     # swap first and second coordinates to get pixel indices that correspond to (height, width)
     # and also clip pixels that are out of range of the camera image
     pixels = np.concatenate(
@@ -286,7 +294,7 @@ def get_pointcloud_from_image_and_depth(sim, image, depth_map, camera_name):
     ### get camera points
     cam_points = np.asarray(o3d_pcd.points).copy()
     print("cam_points: ", cam_points[10000:10010])
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     world_T_cam = get_camera_extrinsic_matrix(sim, camera_name)
     o3d_pcd.transform(world_T_cam)
     points = np.asarray(o3d_pcd.points)
@@ -296,7 +304,7 @@ def get_pointcloud_from_image_and_depth(sim, image, depth_map, camera_name):
     print("cam_points: ", cam_points[10000:10010])
     ## 输出红色字 let check
     print("\033[91m" + "let check" + "\033[0m")
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     return pcd,cam_points
 
     ### print depthmap minmax
