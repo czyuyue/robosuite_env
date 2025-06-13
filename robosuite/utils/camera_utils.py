@@ -146,7 +146,7 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     assert len(world_to_camera_transform.shape) == 2
     assert world_to_camera_transform.shape[0] == 4 and world_to_camera_transform.shape[1] == 4
 
-    print("cam_points before pad: ", points.reshape(-1, 3)[:100])
+    # print("cam_points before pad: ", points.reshape(-1, 3)[:100])
     # convert points to homogenous coordinates -> (px, py, pz, 1)
     ones_pad = np.ones(points.shape[:-1] + (1,))
     points = np.concatenate((points, ones_pad), axis=-1)  # shape [..., 4]
@@ -164,18 +164,18 @@ def project_points_from_world_to_camera(points, world_to_camera_transform, camer
     cam_points = cam_points[..., :3] / cam_points[..., 3:4]  # shape [..., 3]
     cam_points = cam_points.reshape(*cam_points.shape[:-1], 3)
 
-    print("cam_points: ", cam_points[0][:100])
+    # print("cam_points: ", cam_points[0][:100])
     cam_points = cam_points / cam_points[..., 2:3]
-    print("intrinsics: ", K)
+    # print("intrinsics: ", K)
     ## red let check
-    print("\033[91m" + "let check" + "\033[0m")
+    # print("\033[91m" + "let check" + "\033[0m")
     # import pdb; pdb.set_trace()
     pixels = np.matvec(K, cam_points)  # shape [..., 3]
-    print("pixels before rescale: ", pixels[0][:100])
+    # print("pixels before rescale: ", pixels[0][:100])
     # pixels = pixels[:2]
     pixels = pixels[..., :2].round().astype(int)  # shape [..., 2]
 
-    print("pixels: ", pixels[0][:100])
+    # print("pixels: ", pixels[0][:100])
     # import pdb; pdb.set_trace()
     # swap first and second coordinates to get pixel indices that correspond to (height, width)
     # and also clip pixels that are out of range of the camera image

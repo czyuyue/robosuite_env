@@ -124,6 +124,8 @@ class ScriptedPolicy:
         self.gain = 5
         self.directed = False
         self.frames = []
+        self.keypoint_frames = []  # 添加关键点视频帧收集
+        self.step_count = 0
     def set_object_and_target_pos(self, object_name, target_object_name, target_pos):
         self.object_name = object_name
         self.target_object_name = target_object_name
@@ -132,6 +134,7 @@ class ScriptedPolicy:
         self.target_pos[2] = 0.82
         self.state = "lift"
         self.frames = []
+        self.keypoint_frames = []  # 清空关键点视频帧
         ### offset is opposite direction of target_pos
         def normalize(vec):
             return vec / np.linalg.norm(vec)
@@ -291,6 +294,15 @@ class ScriptedPolicy:
             frame = np.concatenate([frame_front, frame_agent, frame_bird], axis=1)
             frame = cv2.putText(frame, f"push {self.object_name} to {self.target_object_name}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             self.frames.append(frame)
+            
+            # 收集关键点可视化帧
+            self.step_count += 1
+            check = self.step_count % 150 == 0
+            keypoint_frame = env.render_with_keypoints(check)
+            # 添加文本到关键点帧
+            keypoint_frame = cv2.putText(keypoint_frame, f"push {self.object_name} to {self.target_object_name}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            self.keypoint_frames.append(keypoint_frame)
+            
 
         print("未能在最大步数内到达目标位置和姿态")
         return False
@@ -358,6 +370,13 @@ class ScriptedPolicy:
         # import pdb; pdb.set_trace()
         imageio.mimsave(video_path, self.frames, fps=20)
         
+        # 保存关键点可视化视频
+        if len(self.keypoint_frames) > 0:
+            keypoint_video_path = video_path.replace('.mp4', '_keypoints.mp4')
+            print(f"saving keypoint video to {keypoint_video_path}")
+            imageio.mimsave(keypoint_video_path, self.keypoint_frames, fps=20)
+        else:
+            print("No keypoint frames to save")
         
 # 配置控制器
 env = suite.make(
@@ -372,13 +391,14 @@ env = suite.make(
     renderer="mujoco",
     control_freq=20,
     ignore_done=True,
+    camera_segmentations=["frontview","agentview","birdview"],
 )
 
 env = DataCollectionWrapper(env, "robosuite_data/robosuite/data/collision_data")
 
 ### 输出当前目录
 print(f"current directory: {os.getcwd()}")
-# import pdb; pdb.set_trace()
+import pdb; pdb.set_trace()
 
 
 # 创建保存视频的目录
