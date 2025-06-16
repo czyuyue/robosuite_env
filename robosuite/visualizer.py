@@ -276,16 +276,18 @@ def start_http_server(directory, port=8000):
 
     # 创建HTTP服务器
     handler = http.server.SimpleHTTPRequestHandler
+    server_url = None
 
     # 允许自动选择可用端口
     for attempt_port in range(port, port + 100):
         try:
             httpd = socketserver.TCPServer(("", attempt_port), handler)
-            print(f"启动HTTP服务器在 http://localhost:{attempt_port}")
+            server_url = f"http://localhost:{attempt_port}"
+            print(f"启动HTTP服务器在 {server_url}")
             print(f"按Ctrl+C停止服务器")
 
             # 在浏览器中打开页面
-            webbrowser.open(f"http://localhost:{attempt_port}")
+            webbrowser.open(server_url)
 
             # 运行服务器
             httpd.serve_forever()
@@ -293,10 +295,16 @@ def start_http_server(directory, port=8000):
         except OSError as e:
             if e.errno == 98:  # 端口已被占用
                 print(f"端口 {attempt_port} 已被占用，尝试下一个端口...")
+                continue
             else:
+                print(f"启动服务器时发生错误: {str(e)}")
                 raise
     else:
         print(f"无法找到可用端口（尝试了 {port} 到 {port+99}）")
+        print("请尝试手动指定一个不同的端口号")
+        return False
+
+    return True
 
 def visualize_ndarray(points_array, colors=None, output_dir="output", port=8000, max_points=100000, point_size=0.002):
     """
@@ -355,8 +363,6 @@ def visualize_ndarray(points_array, colors=None, output_dir="output", port=8000,
     # 启动HTTP服务器在新线程中
     current_dir = os.getcwd()
     server_dir = os.path.abspath(output_dir)
-
-    print(f"在浏览器中启动可视化，URL: http://localhost:{port}")
 
     # 在新线程中启动服务器
     server_thread = threading.Thread(

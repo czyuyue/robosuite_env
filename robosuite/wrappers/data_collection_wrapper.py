@@ -6,6 +6,7 @@ This data collection wrapper is useful for collecting demonstrations.
 import json
 import os
 import time
+import cv2
 
 import numpy as np
 
@@ -273,6 +274,7 @@ class DataCollectionWrapper(Wrapper):
         """
         Method to flush internal state to disk.
         """
+        ### only flush when the episode is done
         print("flush????\n")
         t1, t2 = str(time.time()).split(".")
         state_path = os.path.join(self.ep_directory, "state_id{}_{}.npz".format(self.env_id, t1))
@@ -291,6 +293,13 @@ class DataCollectionWrapper(Wrapper):
             "keypoint_positions": np.array(self.keypoints_pos),
             "env": env_name,
         }
+        ### save image and depth data as png
+        if len(self.images) > 0:
+            for i in range(len(self.images)):
+                img = self.images[i]["agentview"]
+                depth = self.depths[i]["agentview"]
+                cv2.imwrite(os.path.join(self.ep_directory, f"image_{i}.png"), img)
+                cv2.imwrite(os.path.join(self.ep_directory, f"depth_{i}.png"), depth)
         ###### TEMPORARY DISABLED IMAGE AND DEPTH DATA
         # Add image and depth data if available 
         # if len(self.images) > 0:
@@ -302,7 +311,47 @@ class DataCollectionWrapper(Wrapper):
         #     print(f"Saving {len(self.depths)} depth maps with shape: {np.array(self.depths).shape}")
         
         np.savez(state_path, **save_data)
+        ## save keypoint_registry (convert numpy types to python types for JSON serialization)
+        def convert_numpy_types(obj):
+            """递归转换numpy类型为Python原生类型"""
+            if isinstance(obj, dict):
+                return {key: convert_numpy_types(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.integer, np.int32, np.int64)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float32, np.float64)):
+                return float(obj)
+            else:
+                return obj
         
+        keypoint_registry_serializable = convert_numpy_types(self._keypoint_registry)
+        keypoint2object_serializable = convert_numpy_types(self._keypoint2object)
+        
+        with open(os.path.join(self.ep_directory, "keypoint_registry.json"), "w") as f:
+            json.dump(keypoint_registry_serializable, f, indent=2)
+        ## save keypoint2object
+        with open(os.path.join(self.ep_directory, "keypoint2object.json"), "w") as f:
+            json.dump(keypoint2object_serializable, f, indent=2)
+        # Save video of images
+        if len(self.images) > 0:
+            # Get video writer
+            video_path = os.path.join(self.ep_directory, "video.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_writer = cv2.VideoWriter(video_path, fourcc, 10.0, (640, 480))
+            
+            # Write each frame
+            for i in range(len(self.images)):
+                img = self.images[i]["agentview"]
+                # Convert RGB to BGR for OpenCV
+                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                video_writer.write(img_bgr)
+            
+            # Release video writer
+            video_writer.release()
+            print(f"Saved video to {video_path}")
         # Clear all data
         self.states = []
         self.action_infos = []
@@ -311,7 +360,7 @@ class DataCollectionWrapper(Wrapper):
         self.depths = []
         self.successful = False
 
-    def register_keypoints(self, pixels,points_3d):
+    def register_keypoints(self, pixels,points_3d,segmentation):
         """
         注册关键点到物体上，找到最接近的几何体
 
@@ -328,13 +377,14 @@ class DataCollectionWrapper(Wrapper):
         # 不考虑这些物体作为关键点关联对象
         # exclude_names = ['wall', 'floor', 'fixed', 'table', 'robot', 'target']
         exclude_names = []
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
 
         ## get the segmentation mask
-        segmentation, _ = self.env.sim.render(width=640, height=480, camera_name="agentview", segmentation=True,depth=True)
-        segmentation = segmentation[:,:,1]
+        # segmentation, _ = self.env.sim.render(width=640, height=480, camera_name="agentview", segmentation=True,depth=True)
+        # segmentation = segmentation[:,:,1]
         ### init image
+        segmentation = segmentation[:,:,1]
         image = self.env.sim.render(width=640, height=480, camera_name="agentview")
 
         world_to_camera_transform = get_camera_extrinsic_matrix(self.env.sim, "agentview")
@@ -344,11 +394,11 @@ class DataCollectionWrapper(Wrapper):
         obs = self.env._get_observations()
         print("obs: ", obs)
         ### print pos of all cubes
-        for key in obs:
-            if "cube" in key and "pos" in key:
-                print("cube: ", key)
-                print("cube pos: ", obs[key])
-                import pdb; pdb.set_trace()
+        # for key in obs:
+        #     if "cube" in key and "pos" in key:
+        #         print("cube: ", key)
+        #         print("cube pos: ", obs[key])
+        #         import pdb; pdb.set_trace()
         # import pdb; pdb.set_trace()
         import cv2
         for i in range(len(pixels)):
@@ -358,8 +408,8 @@ class DataCollectionWrapper(Wrapper):
             
             ### add a circle to the image
             cv2.circle(image, (x, y), 5, (0, 0, 255), -1)
-            print("y, x: ", y, x)
-            print("segmentation: ", segmentation.shape)
+            # print("y, x: ", y, x)
+            # print("segmentation: ", segmentation.shape)
             # import pdb; pdb.set_trace()
             geom_id = segmentation[y, x]
             points_2d = project_points_from_world_to_camera(keypoint, world_to_camera_transform,480,640, K)
@@ -369,6 +419,18 @@ class DataCollectionWrapper(Wrapper):
             # import pdb; pdb.set_trace()
             if geom_id < len(self.env.sim.model.geom_names):
                 geom_name = self.env.sim.model.geom_id2name(geom_id)
+                if "table" in geom_name:
+                    continue
+                if "floor" in geom_name:
+                    continue
+                if "wall" in geom_name:
+                    continue
+                if "fixed" in geom_name:
+                    continue
+                if "robot" in geom_name:
+                    continue
+              
+                # if "cube" in geom_name:
                 # print(f"Pixel ({x}, {y}):")
                 # print(f"  - geom_id: {geom_id}")
                 # print(f"  - geom_name: {geom_name}")
@@ -376,9 +438,11 @@ class DataCollectionWrapper(Wrapper):
                 body_id = self.env.sim.model.geom_bodyid[geom_id]
                 body_name = self.env.sim.model.body_id2name(body_id)
                 ### add text to the image
-                cv2.putText(image, geom_name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                print(f"  - body_name: {body_name}")
+                # cv2.putText(image, geom_name, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                # print(f"  - body_name: {body_name}")
                 ## register the keypoint
+                print("geom_name: ", geom_name)
+                # import pdb; pdb.set_trace()
                 self._keypoint_registry[i] = {
                     "geom_id": geom_id,
                     "geom_name": geom_name,
@@ -390,12 +454,12 @@ class DataCollectionWrapper(Wrapper):
                     "keypoint_offset": keypoint - self.env.sim.data.get_geom_xpos(geom_name)
                 }
                 distance = np.linalg.norm(keypoint - self.env.sim.data.get_geom_xpos(geom_name))
-                if "cube" in geom_name:
-                    print("cube: ", geom_name)
-                    print("distance: ", distance)
-                    print("keypoint: ", keypoint)
-                    print("initial_pos: ", self.env.sim.data.get_geom_xpos(geom_name))
-                    import pdb; pdb.set_trace()
+                # if "cube" in geom_name:
+                #     print("cube: ", geom_name)
+                #     print("distance: ", distance)
+                #     print("keypoint: ", keypoint)
+                #     print("initial_pos: ", self.env.sim.data.get_geom_xpos(geom_name))
+                #     import pdb; pdb.set_trace()
                 # import pdb; pdb.set_trace()
             if i % 10 == 0:
                 cv2.imwrite("image_vis.png", image)
@@ -465,7 +529,7 @@ class DataCollectionWrapper(Wrapper):
         #             "keypoint_offset": keypoint - self.env.sim.data.get_geom_xpos(closest_geom_name)
         #         }
         #         self._keypoint2object[idx] = closest_body_name
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # 更新关键点位置为对应几何体的位置
         for idx in self._keypoint_registry:
             self.keypoints[idx] = self._keypoint_registry[idx]["initial_pos"] + self._keypoint_registry[idx]["keypoint_offset"]
@@ -496,18 +560,18 @@ class DataCollectionWrapper(Wrapper):
             initial_pos = reg["initial_pos"]
             initial_keypoint = reg["initial_keypoint"]
 
-            if check and np.linalg.norm(keypoint_pos - initial_keypoint) > 0.01:
+            # if check and np.linalg.norm(keypoint_pos - initial_keypoint) > 0.01:
 
-                print("object name: ", reg["geom_name"])
-                print("current_pos: ", current_pos)
-                print("initial_pos: ", initial_pos)
-                print("keypoint_pos: ", keypoint_pos)
-                print("initial_keypoint: ", initial_keypoint)
-                distance_now = np.linalg.norm(keypoint_pos - current_pos)
-                distance_initial = np.linalg.norm(initial_keypoint - initial_pos)
-                print("distance_now: ", distance_now)
-                print("distance_initial: ", distance_initial)
-                import pdb; pdb.set_trace()
+            #     print("object name: ", reg["geom_name"])
+            #     print("current_pos: ", current_pos)
+            #     print("initial_pos: ", initial_pos)
+            #     print("keypoint_pos: ", keypoint_pos)
+            #     print("initial_keypoint: ", initial_keypoint)
+            #     distance_now = np.linalg.norm(keypoint_pos - current_pos)
+            #     distance_initial = np.linalg.norm(initial_keypoint - initial_pos)
+            #     print("distance_now: ", distance_now)
+            #     print("distance_initial: ", distance_initial)
+            #     import pdb; pdb.set_trace()
         return np.array(keypoint_positions)
 
     def get_object_by_keypoint(self, keypoint_idx):
@@ -561,6 +625,8 @@ class DataCollectionWrapper(Wrapper):
 
         # 获取当前图像
         image = self.env.sim.render(width=640, height=480, camera_name="agentview")
+        ## flip vertically
+        image = cv2.flip(image, 0)
         ## 绘制关键点
         ## project the keypoints to the image
         ## 使用相机内参矩阵和外参矩阵将关键点投影到图像上
@@ -608,6 +674,11 @@ class DataCollectionWrapper(Wrapper):
         ##get agentview image and depth
         self._pixels, self._depths = self.env.sim.render(width=640, height=480, camera_name="agentview", depth=True)
         self._segmentation, _ = self.env.sim.render(width=640, height=480, camera_name="agentview", segmentation=True,depth=True)
+        ### 翻转图像 VERY IMPORTANT
+        self._pixels = cv2.flip(self._pixels, 0)
+        self._depths = cv2.flip(self._depths, 0)
+        self._segmentation = cv2.flip(self._segmentation, 0)
+        
         # world_to_camera_transform = get_camera_extrinsic_matrix(self.env.sim, "agentview")
         # camera_to_world_transform = np.linalg.inv(world_to_camera_transform)
 
@@ -622,135 +693,134 @@ class DataCollectionWrapper(Wrapper):
 #         opt = mujoco.MjvOption()
 #         mujoco.mjv_defaultOption(opt)
 #         opt.geomgroup[4] = False 
-        print(f"table_leg3_visual RGBA: {geom_rgba}")
-        print(f"table_leg3_visual group id: {self.env.sim.model.geom_group[geom_id]}")
+        # print(f"table_leg3_visual RGBA: {geom_rgba}")
+        # print(f"table_leg3_visual group id: {self.env.sim.model.geom_group[geom_id]}")
 
         
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         ## save the segmentation map
-        print("self._segmentation: ", self._segmentation.shape)
+        # print("self._segmentation: ", self._segmentation.shape)
         ## shape (480, 640, 2)
         ## save the segmentation map
-        import cv2
-        cv2.imwrite("segmentation_mask1.png", self._segmentation[:,:,0]*20)
-        cv2.imwrite("segmentation_mask2.png", self._segmentation[:,:,1]*20)
+        # cv2.imwrite("segmentation_mask1.png", self._segmentation[:,:,0]*20)
+        # cv2.imwrite("segmentation_mask2.png", self._segmentation[:,:,1]*20)
         # Get unique values in mask2
-        unique_values = np.unique(self._segmentation[:,:,1])
-        ## unique_values for another half
-        unique_values_2 = np.unique(self._segmentation[:,:,0])
-        print("unique_values_2: ", unique_values_2)
-        for body_id in unique_values_2:
-            name = self.env.sim.model.body_id2name(body_id)
-            print(f"Body ID {body_id}: {name}")
-        # Get all geoms that belong to body ID 6
-        body_id = 6
-        print(f"\n=== Geoms belonging to body ID {body_id} ===")
-        for geom_id in range(self.env.sim.model.ngeom):
-            if self.env.sim.model.geom_bodyid[geom_id] == body_id:
-                geom_name = self.env.sim.model.geom_id2name(geom_id)
-                print(f"Geom ID {geom_id}: {geom_name}")
-        # Get all pixels where body_id is 6
-        body_6_pixels = np.where(self._segmentation[:,:,0] == 6)
+        # unique_values = np.unique(self._segmentation[:,:,1])
+        # ## unique_values for another half
+        # unique_values_2 = np.unique(self._segmentation[:,:,0])
+        # print("unique_values_2: ", unique_values_2)
+        # for body_id in unique_values_2:
+        #     name = self.env.sim.model.body_id2name(body_id)
+        #     print(f"Body ID {body_id}: {name}")
+        # # Get all geoms that belong to body ID 6
+        # body_id = 6
+        # print(f"\n=== Geoms belonging to body ID {body_id} ===")
+        # for geom_id in range(self.env.sim.model.ngeom):
+        #     if self.env.sim.model.geom_bodyid[geom_id] == body_id:
+        #         geom_name = self.env.sim.model.geom_id2name(geom_id)
+        #         print(f"Geom ID {geom_id}: {geom_name}")
+        # # Get all pixels where body_id is 6
+        # body_6_pixels = np.where(self._segmentation[:,:,0] == 6)
         
         # Sample a few points from these pixels
-        num_samples = 5
-        if len(body_6_pixels[0]) > 0:
-            indices = np.random.choice(len(body_6_pixels[0]), min(num_samples, len(body_6_pixels[0])), replace=False)
+        # num_samples = 5
+        # if len(body_6_pixels[0]) > 0:
+        #     indices = np.random.choice(len(body_6_pixels[0]), min(num_samples, len(body_6_pixels[0])), replace=False)
             
-            print("\n=== Sampling points from body_id 6 ===")
-            for idx in indices:
-                y, x = body_6_pixels[0][idx], body_6_pixels[1][idx]
-                # Get the geom_id at this pixel from the second channel
-                geom_id = self._segmentation[y, x, 1]
-                print(f"Pixel ({x}, {y}):")
-                print(f"  - geom_id: {geom_id}")
-                if geom_id < len(self.env.sim.model.geom_names):
-                    geom_name = self.env.sim.model.geom_id2name(geom_id)
-                    print(f"  - geom_name: {geom_name}")
-        import pdb; pdb.set_trace()
+        #     print("\n=== Sampling points from body_id 6 ===")
+        #     for idx in indices:
+        #         y, x = body_6_pixels[0][idx], body_6_pixels[1][idx]
+        #         # Get the geom_id at this pixel from the second channel
+        #         geom_id = self._segmentation[y, x, 1]
+        #         print(f"Pixel ({x}, {y}):")
+        #         print(f"  - geom_id: {geom_id}")
+        #         if geom_id < len(self.env.sim.model.geom_names):
+        #             geom_name = self.env.sim.model.geom_id2name(geom_id)
+        #             print(f"  - geom_name: {geom_name}")
+        # import pdb; pdb.set_trace()
         
         # Create a copy of the image for visualization
-        mask2_vis = self._segmentation[:,:,1].copy()*20
+        # mask2_vis = self._segmentation[:,:,1].copy()*20
         
-        # For each unique value (region)
-        for val in unique_values:
-            if val == 0:  # Skip background
-                continue
+        # # For each unique value (region)
+        # for val in unique_values:
+        #     if val == 0:  # Skip background
+        #         continue
                 
-            # Find all pixels with this value
-            region_pixels = np.where(self._segmentation[:,:,1] == val)
+        #     # Find all pixels with this value
+        #     region_pixels = np.where(self._segmentation[:,:,1] == val)
             
-            # Find middle point of the region
-            y_middle = region_pixels[0][len(region_pixels[0])//2]
-            x_middle = region_pixels[1][len(region_pixels[1])//2]
+        #     # Find middle point of the region
+        #     y_middle = region_pixels[0][len(region_pixels[0])//2]
+        #     x_middle = region_pixels[1][len(region_pixels[1])//2]
             
-            # Add number label at middle point
-            cv2.putText(mask2_vis, str(int(val)), (x_middle, y_middle), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, 255, 2)
+        #     # Add number label at middle point
+        #     cv2.putText(mask2_vis, str(int(val)), (x_middle, y_middle), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 1, 255, 2)
         
         # Save the labeled mask
-        cv2.imwrite("segmentation_mask2_labeled.png", mask2_vis)
+        # cv2.imwrite("segmentation_mask2_labeled.png", mask2_vis)
 
         # 分析所有可见的几何体
-        print("\n=== 分析所有可见几何体 ===")
+        # print("\n=== 分析所有可见几何体 ===")
         
-        for target_geom_id in unique_values:
-            if target_geom_id == 0:  # Skip background
-                continue
+        # for target_geom_id in unique_values:
+        #     if target_geom_id == 0:  # Skip background
+        #         continue
                 
-            print(f"\n=== 分析 Geom ID {target_geom_id} ===")
+        #     print(f"\n=== 分析 Geom ID {target_geom_id} ===")
             
-            try:
-                # 获取几何体名称
-                if target_geom_id < len(self.env.sim.model.geom_names):
-                    geom_name = self.env.sim.model.geom_id2name(target_geom_id)
-                    print(f"Geom ID {target_geom_id} 名称: {geom_name}")
+        #     try:
+        #         # 获取几何体名称
+        #         if target_geom_id < len(self.env.sim.model.geom_names):
+        #             geom_name = self.env.sim.model.geom_id2name(target_geom_id)
+        #             print(f"Geom ID {target_geom_id} 名称: {geom_name}")
                     
-                    # 获取几何体类型
-                    geom_type = self.env.sim.model.geom_type[target_geom_id]
-                    geom_type_names = {0: 'plane', 1: 'hfield', 2: 'sphere', 3: 'capsule', 
-                                       4: 'ellipsoid', 5: 'cylinder', 6: 'box', 7: 'mesh'}
-                    print(f"几何体类型: {geom_type_names.get(geom_type, 'unknown')} (code: {geom_type})")
+        #             # 获取几何体类型
+        #             geom_type = self.env.sim.model.geom_type[target_geom_id]
+        #             geom_type_names = {0: 'plane', 1: 'hfield', 2: 'sphere', 3: 'capsule', 
+        #                                4: 'ellipsoid', 5: 'cylinder', 6: 'box', 7: 'mesh'}
+        #             print(f"几何体类型: {geom_type_names.get(geom_type, 'unknown')} (code: {geom_type})")
                     
-                    # 获取几何体位置
-                    geom_pos = self.env.sim.data.geom_xpos[target_geom_id]
-                    print(f"世界坐标位置: {geom_pos}")
+        #             # 获取几何体位置
+        #             geom_pos = self.env.sim.data.geom_xpos[target_geom_id]
+        #             print(f"世界坐标位置: {geom_pos}")
                     
-                    # 获取几何体大小
-                    geom_size = self.env.sim.model.geom_size[target_geom_id]
-                    print(f"几何体大小: {geom_size}")
+        #             # 获取几何体大小
+        #             geom_size = self.env.sim.model.geom_size[target_geom_id]
+        #             print(f"几何体大小: {geom_size}")
                     
-                    # 获取几何体所属的body
-                    geom_bodyid = self.env.sim.model.geom_bodyid[target_geom_id]
-                    if geom_bodyid < len(self.env.sim.model.body_names):
-                        body_name = self.env.sim.model.body_id2name(geom_bodyid)
-                        print(f"所属Body: {body_name} (ID: {geom_bodyid})")
+        #             # 获取几何体所属的body
+        #             geom_bodyid = self.env.sim.model.geom_bodyid[target_geom_id]
+        #             if geom_bodyid < len(self.env.sim.model.body_names):
+        #                 body_name = self.env.sim.model.body_id2name(geom_bodyid)
+        #                 print(f"所属Body: {body_name} (ID: {geom_bodyid})")
                     
-                    # 获取几何体颜色/材质
-                    geom_rgba = self.env.sim.model.geom_rgba[target_geom_id]
-                    print(f"颜色 (RGBA): {geom_rgba}")
+        #             # 获取几何体颜色/材质
+        #             geom_rgba = self.env.sim.model.geom_rgba[target_geom_id]
+        #             print(f"颜色 (RGBA): {geom_rgba}")
                     
-                    # 查看这个geom在分割图中占据的像素数量
-                    geom_pixels = np.sum(self._segmentation[:,:,1] == target_geom_id)
-                    print(f"在分割图中占据的像素数: {geom_pixels}")
+        #             # 查看这个geom在分割图中占据的像素数量
+        #             geom_pixels = np.sum(self._segmentation[:,:,1] == target_geom_id)
+        #             print(f"在分割图中占据的像素数: {geom_pixels}")
                     
-                else:
-                    print(f"Geom ID {target_geom_id} 超出范围")
+        #         else:
+        #             print(f"Geom ID {target_geom_id} 超出范围")
                     
-            except Exception as e:
-                print(f"获取geom信息时出错: {e}")
+        #     except Exception as e:
+        #         print(f"获取geom信息时出错: {e}")
         
-        print("=== 所有几何体列表 ===")
-        try:
-            for i in range(min(20, len(self.env.sim.model.geom_names))):  # 只显示前20个
-                geom_name = self.env.sim.model.geom_id2name(i)
-                geom_pixels = np.sum(self._segmentation[:,:,1] == i)
-                if geom_pixels > 0:  # 只显示在图像中可见的几何体
-                    print(f"ID {i}: {geom_name} ({geom_pixels} pixels)")
-        except Exception as e:
-            print(f"列出几何体时出错: {e}")
+        # print("=== 所有几何体列表 ===")
+        # try:
+        #     for i in range(min(20, len(self.env.sim.model.geom_names))):  # 只显示前20个
+        #         geom_name = self.env.sim.model.geom_id2name(i)
+        #         geom_pixels = np.sum(self._segmentation[:,:,1] == i)
+        #         if geom_pixels > 0:  # 只显示在图像中可见的几何体
+        #             print(f"ID {i}: {geom_name} ({geom_pixels} pixels)")
+        # except Exception as e:
+        #     print(f"列出几何体时出错: {e}")
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         ## save the picture of agentview
         cv2.imwrite("agentview.png", self._pixels)
         ## save the depth map
@@ -799,11 +869,46 @@ class DataCollectionWrapper(Wrapper):
         ## 输出每一维的min max 一共三维 N
         print("points_3d.min(): ", points_3d.min(axis=0))
         print("points_3d.max(): ", points_3d.max(axis=0))
-
+        ## downsampling to 50000 points
+        points_3d_vis = points_3d[np.random.choice(points_3d.shape[0], 50000, replace=False)]
+        print("points_3d_vis.shape: ", points_3d_vis.shape)
         import sys
         sys.path.append("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+
+        colors = np.zeros((points_3d_vis.shape[0], 3))
+        ## grey 
+        colors[:, 0] = 0.5
+        colors[:, 1] = 0.5
+        colors[:, 2] = 0.5
+        ### 可视化的时候 把 cube的 位置也画出来 red color
+        obs = self.env._get_observations()
+        for key in obs:
+            if "cube" in key and "pos" in key and (not "gripper" in key):
+                pos = obs[key]
+                print("key: ", key)
+                print("pos: ", pos)
+                ## make it large ball by adding multiple points around the center
+                # Create a small sphere of points around the cube position
+                num_points = 100  # Number of points to create the sphere
+                radius = 0.02  # Radius of the sphere
+                
+                # Generate random points on a sphere
+                phi = np.random.uniform(0, 2*np.pi, num_points)
+                theta = np.random.uniform(0, np.pi, num_points)
+                x = radius * np.sin(theta) * np.cos(phi)
+                y = radius * np.sin(theta) * np.sin(phi)
+                z = radius * np.cos(theta)
+                
+                # Add the sphere points to the point cloud
+                sphere_points = np.stack([x, y, z], axis=1) + pos
+                points_3d_vis = np.concatenate([points_3d_vis, sphere_points], axis=0)
+                sphere_colors = np.tile(np.array([1, 0, 0]), (num_points, 1))  # Red color for all sphere points
+                colors = np.concatenate([colors, sphere_colors], axis=0)
+        # import pdb; pdb.set_trace()
+        print("points_3d_vis: ", points_3d_vis.shape)
+        # import pdb; pdb.set_trace()
         from visualizer import visualize_ndarray
-        # visualize_ndarray(points_3d, colors=None, output_dir="pointcloud_visualizer", port=8000, max_points=100000, point_size=0.002)
+        # visualize_ndarray(points_3d_vis, colors=colors, output_dir="pointcloud_visualizer", port=8000, max_points=100000, point_size=0.002)
 
         # import pdb; pdb.set_trace()
         print(f"current directory: {os.getcwd()}")
@@ -859,7 +964,53 @@ class DataCollectionWrapper(Wrapper):
 
 
         # import pdb; pdb.set_trace()
-        self.register_keypoints(keypoints_pixel_ids, keypoints_3d)
+
+        ## add keypoints_3d to points_3d_vis also a ball
+        for pixel_id in keypoints_pixel_ids:
+            num_points = 20  # Number of points to create the sphere
+            radius = 0.005  # Radius of the sphere
+            
+            # Generate random points on a sphere
+            phi = np.random.uniform(0, 2*np.pi, num_points)
+            theta = np.random.uniform(0, np.pi, num_points)
+            x = radius * np.sin(theta) * np.cos(phi)
+            y = radius * np.sin(theta) * np.sin(phi)
+            z = radius * np.cos(theta)
+            pos = points_3d[pixel_id[0], pixel_id[1], :].reshape(1, 3)
+            ## geom_id
+            geom_id = self._segmentation[pixel_id[0], pixel_id[1], 1]
+            ## get the geom_name
+            geom_name = self.env.sim.model.geom_id2name(geom_id)
+            if "cube" in geom_name:
+                print("cube found")
+                print("geom_name: ", geom_name, "geom_id: ", geom_id)
+                ## get geom_pos
+                geom_pos = self.env.sim.data.geom_xpos[geom_id]
+                dist = np.linalg.norm(geom_pos - pos)
+                print("geom_pos: ", geom_pos)
+                print("pos: ", pos)
+                print("dist: ", dist)
+                # import pdb; pdb.set_trace()
+            else:
+                continue
+            ## get the geom_rgba
+            # Add the sphere points to the point cloud
+            sphere_points = np.stack([x, y, z], axis=1) + pos
+            points_3d_vis = np.concatenate([points_3d_vis, sphere_points], axis=0)
+            sphere_colors = np.tile(np.array([0, 0, 1]), (num_points, 1))  #  color for all sphere points
+            colors = np.concatenate([colors, sphere_colors], axis=0)
+        
+
+        # visualize_ndarray(points_3d_vis, colors=colors, output_dir="pointcloud_visualizer", port=8000, max_points=100000, point_size=0.002)
+
+        # import pdb; pdb.set_trace()
+        print(f"current directory: {os.getcwd()}")
+        ## 将当前目录设置为 /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite
+        os.chdir("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+        print(f"current directory: {os.getcwd()}")
+
+
+        self.register_keypoints(keypoints_pixel_ids, keypoints_3d, self._segmentation)
         self.render_with_keypoints()
         # import pdb; pdb.set_trace()
         return ret
@@ -889,6 +1040,7 @@ class DataCollectionWrapper(Wrapper):
         # collect the current simulation state if necessary
         if self.t % self.collect_freq == 0:
             state = self.env.sim.get_state().flatten()
+    
             self.states.append(state)
 
             info = {}
@@ -904,17 +1056,19 @@ class DataCollectionWrapper(Wrapper):
             keypoints_pos = self.get_keypoint_positions()
             self.keypoints_pos.append(keypoints_pos)
             
-            # Collect image and depth data from all cameras
+            # Collect image and depth data from agentview camera
             images_step = {}
             depths_step = {}
-            for cam_name in self.cam_names:
-                try:
-                    # Get image and depth for this camera
-                    img, depth = self.env.sim.render(width=640, height=480, camera_name=cam_name, depth=True)
-                    images_step[cam_name] = img
-                    depths_step[cam_name] = depth
-                except Exception as e:
-                    print(f"Warning: Could not collect data from camera {cam_name}: {e}")
+            try:
+                # Get image and depth for this camera
+                img, depth = self.env.sim.render(width=640, height=480, camera_name="agentview", depth=True)
+                ## vertical flip the image
+                img = cv2.flip(img, 0)
+                depth = cv2.flip(depth, 0)
+                images_step["agentview"] = img
+                depths_step["agentview"] = depth
+            except Exception as e:
+                print(f"Warning: Could not collect data from camera agentview: {e}")
             
             # Store the collected images and depths
             self.images.append(images_step)
@@ -925,8 +1079,8 @@ class DataCollectionWrapper(Wrapper):
             self.successful = True
 
         # flush collected data to disk if necessary
-        if self.t % self.flush_freq == 0:
-            self._flush()
+        # if self.t % self.flush_freq == 0:
+            # self._flush()
 
         return ret
 

@@ -398,7 +398,7 @@ env = DataCollectionWrapper(env, "robosuite_data/robosuite/data/collision_data")
 
 ### 输出当前目录
 print(f"current directory: {os.getcwd()}")
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 
 # 创建保存视频的目录

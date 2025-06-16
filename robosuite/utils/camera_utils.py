@@ -286,8 +286,9 @@ def get_pointcloud_from_image_and_depth(sim, image, depth_map, camera_name):
         fy = cam_mat[1,1]
         return o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
 
-    rgb = verticalFlip(image)
-    depth = get_real_depth_map(sim, verticalFlip(depth_map))
+    # rgb = verticalFlip(image)
+    rgb = image
+    depth = get_real_depth_map(sim, depth_map)
     o3d_cammat = get_o3d_cammat()
     o3d_depth = o3d.geometry.Image(depth)
     o3d_pcd = o3d.geometry.PointCloud.create_from_depth_image(o3d_depth, o3d_cammat)
