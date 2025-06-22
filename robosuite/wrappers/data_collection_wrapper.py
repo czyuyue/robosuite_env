@@ -294,18 +294,40 @@ class DataCollectionWrapper(Wrapper):
             "env": env_name,
         }
         ### save image and depth data as png
-        if len(self.images) > 0:
-            for i in range(len(self.images)):
-                img = self.images[i]["agentview"]
-                depth = self.depths[i]["agentview"]
-                cv2.imwrite(os.path.join(self.ep_directory, f"image_{i}.png"), img)
-                cv2.imwrite(os.path.join(self.ep_directory, f"depth_{i}.png"), depth)
+        # if len(self.images) > 0:
+        #     for i in range(len(self.images)):
+        #         img = self.images[i]["agentview"]
+        #         depth = self.depths[i]["agentview"]
+        #         cv2.imwrite(os.path.join(self.ep_directory, f"image_{i}.png"), img)
+        #         cv2.imwrite(os.path.join(self.ep_directory, f"depth_{i}.png"), depth)
         ###### TEMPORARY DISABLED IMAGE AND DEPTH DATA
         # Add image and depth data if available 
         # if len(self.images) > 0:
         #     save_data["images"] = np.array(self.images)
         #     print(f"Saving {len(self.images)} images with shape: {np.array(self.images).shape}")
         
+        ## convert the depth data to uint16
+        depth_agentview = [d["agentview"] for d in self.depths]
+        depth_agentview = np.array(depth_agentview)
+        print("depth_agentview: ", depth_agentview.shape)
+        # import pdb; pdb.set_trace()
+        depth_min = np.min(depth_agentview)
+        depth_max = np.max(depth_agentview)
+        
+        # Convert depth from min-max range to uint16 (0-65535)
+        depth_agentview_normalized = ((depth_agentview - depth_min) / (depth_max - depth_min) * 65535).astype(np.uint16)
+
+        ## save the depth_min and depth_max to the depth_min_max.npz
+        np.savez(os.path.join(self.ep_directory, "depth_min_max.npz"), depth_min=depth_min, depth_max=depth_max)
+        ## save it to avi use FFv1
+        video_path = os.path.join(self.ep_directory, "depth.avi")
+        import imageio
+        imageio.mimwrite(video_path, depth_agentview_normalized, fps=10.0, codec='ffv1', pixelformat='gray16le')
+        ## save the depth_agentview to the depth_agentview.npz
+        # np.savez(os.path.join(self.ep_directory, "depth_agentview.npz"), depth_agentview=depth_agentview)
+        
+        
+
         # if len(self.depths) > 0:
         #     save_data["depths"] = np.array(self.depths)
         #     print(f"Saving {len(self.depths)} depth maps with shape: {np.array(self.depths).shape}")
@@ -913,7 +935,7 @@ class DataCollectionWrapper(Wrapper):
         # import pdb; pdb.set_trace()
         print(f"current directory: {os.getcwd()}")
         ## 将当前目录设置为 /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite
-        os.chdir("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+        os.chdir("/data_new/yueyu/zz/robosuite_env/robosuite")
         print(f"current directory: {os.getcwd()}")
         # import pdb; pdb.set_trace()
         ###  visualize the points_3d using cv2
@@ -1006,7 +1028,7 @@ class DataCollectionWrapper(Wrapper):
         # import pdb; pdb.set_trace()
         print(f"current directory: {os.getcwd()}")
         ## 将当前目录设置为 /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite
-        os.chdir("/home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite")
+        os.chdir("/data_new/yueyu/zz/robosuite_env/robosuite")
         print(f"current directory: {os.getcwd()}")
 
 

@@ -626,13 +626,17 @@ class ROBOSUITE_DATASET(Dataset):
                 camera_segmentations=["frontview","agentview","birdview"],
             )
         ## 遍历所有文件夹
+        import cv2
+        import imageio
+        # import pdb; pdb.set_trace()
         for folder in tqdm(os.listdir(data_root)):
             if os.path.isdir(os.path.join(data_root, folder)):
                 print(f'Processing folder: {folder}')
                 ''' 
                 Structure:
-                    depth_*.png
-                    rgb_*.png
+                    depth.avi
+                    video.mp4
+                    depth_min_max.npz
                     keypoint_registry.json
                     state_id0_{??}.npy
                 '''
@@ -655,13 +659,49 @@ class ROBOSUITE_DATASET(Dataset):
                 episode_length = keypoint_positions.shape[0]
                 print("keys: ", keys)
                 print(f'Episode length: {episode_length}')
+                video_path = os.path.join(data_root, folder, 'video.mp4')
+                depth_video_path = os.path.join(data_root, folder, 'depth.avi')
+                
+                # Load depth min/max values for normalization
+                depth_min_max_file = os.path.join(data_root, folder, 'depth_min_max.npz')
+                depth_min_max = np.load(depth_min_max_file)
+                depth_min = depth_min_max['depth_min']
+                depth_max = depth_min_max['depth_max']
+                print("depth_min: ", depth_min)
+                print("depth_max: ", depth_max)
+                import pdb; pdb.set_trace()
+                # Extract frames from videos
+                
+                # Load RGB video
+                cap = cv2.VideoCapture(video_path)
+                rgb_frames = []
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    # Convert BGR to RGB
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    rgb_frames.append(frame_rgb)
+                cap.release()
+                rgb_frames = np.array(rgb_frames)
+                
+                # Load depth video
+                depth_frames = []
+                depth_reader = imageio.get_reader(depth_video_path)
+                for frame in depth_reader:
+                    # Convert uint16 back to float depth values
+                    depth_normalized = frame.astype(np.float32) / 65535.0
+                    depth_denormalized = depth_normalized * (depth_max - depth_min) + depth_min
+                    depth_frames.append(depth_denormalized)
+                depth_frames = np.array(depth_frames)
+
+                
                 for i in range(episode_length-self.traj_len):
-                    keypoints_traj = keypoint_positions[i:i+self.traj_len]
-                    ## load image and depth
-                    rgb_file = os.path.join(data_root, folder, f'image_{i}.png')
-                    depth_file = os.path.join(data_root, folder, f'depth_{i}.png')
-                    rgb = cv2.imread(rgb_file)
-                    depth = cv2.imread(depth_file, cv2.IMREAD_UNCHANGED)
+                    keypoints_traj = keypoint_positions[i:i+self.traj_len]                   
+                    
+                    # Get current frame
+                    rgb = rgb_frames[i]  # Shape: (H, W, 3)
+                    depth = depth_frames[i]  # Shape: (H, W)
                     print("rgb: ", rgb.shape)
                     print("depth: ", depth.shape)
                     ## type
@@ -670,6 +710,7 @@ class ROBOSUITE_DATASET(Dataset):
                     ## output some sample
                     print("rgb: ", rgb[100:105, 100:105, :])
                     print("depth: ", depth[100:105, 100:105])
+                    
                     import pdb; pdb.set_trace()
                     points_3d , _ = get_pointcloud_from_image_and_depth(self.env.sim, rgb, depth,"agentview")
                     print("points_3d: ", points_3d.shape)
