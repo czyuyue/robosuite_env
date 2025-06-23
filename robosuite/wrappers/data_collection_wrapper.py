@@ -7,6 +7,7 @@ import json
 import os
 import time
 import cv2
+import ffmpeg
 
 import numpy as np
 
@@ -14,6 +15,130 @@ from robosuite.utils.mjcf_utils import save_sim_model
 from robosuite.wrappers import Wrapper
 from robosuite.utils.camera_utils import transform_from_pixels_to_world, get_camera_extrinsic_matrix,get_pointcloud_from_image_and_depth
 from robosuite.utils.camera_utils import project_points_from_world_to_camera,get_camera_intrinsic_matrix
+
+def save_with_ffmpeg_python(frames, video_path, fps=10.0):
+    height, width = frames[0].shape
+    
+    process = (
+        ffmpeg
+        .input('pipe:', format='rawvideo', pix_fmt='gray16le', 
+            s=f'{width}x{height}', r=fps)
+        .output(video_path, vcodec='ffv1', pix_fmt='gray16le')
+        .overwrite_output()
+        .run_async(pipe_stdin=True, quiet=True)
+    )
+    
+    try:
+        for frame in frames:
+            process.stdin.write(frame.astype(np.uint16).tobytes())
+        process.stdin.close()
+        process.wait()
+    except Exception as e:
+        process.kill()
+        raise e
+
+import subprocess
+
+def save_16bit_reliable(frames, video_path, fps=10.0):
+    if len(frames) == 0:
+        return
+    
+    # 检查输入数据
+    print(f"Input frame dtype: {frames[0].dtype}")
+    print(f"Input frame range: {frames[0].min()} - {frames[0].max()}")
+    
+    height, width = frames[0].shape
+    
+    cmd = [
+        'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'rawvideo',
+        '-pix_fmt', 'gray16le',
+        '-s', f'{width}x{height}',
+        '-r', str(fps),
+        '-i', '-',
+        '-c:v', 'ffv1',
+        '-pix_fmt', 'gray16le',
+        video_path
+    ]
+    
+    print(f"FFmpeg command: {' '.join(cmd)}")
+    # process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+   
+    process = None
+    try:
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE, 
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # 准备所有数据
+        all_data = b''
+        for i, frame in enumerate(frames):
+            frame_uint16 = frame.astype(np.uint16)
+            if i == 0:
+                print(f"First frame after conversion: dtype={frame_uint16.dtype}, range={frame_uint16.min()}-{frame_uint16.max()}")
+            all_data += frame_uint16.tobytes()
+        
+        # # 一次性写入所有数据并关闭stdin
+        # try:
+        #     process.stdin.write(all_data)
+        #     process.stdin.close()
+        # except BrokenPipeError:
+        #     # FFmpeg可能提前退出，这是正常的
+        #     pass
+        try:
+            stdout, stderr = process.communicate(input=all_data, timeout=30)
+            if process.returncode != 0:
+                print(f"FFmpeg stderr: {stderr.decode()}")
+                raise RuntimeError(f"FFmpeg failed with code {process.returncode}")
+        except subprocess.TimeoutExpired:
+            print("FFmpeg超时，强制终止进程")
+            process.kill()
+            process.wait()
+            raise RuntimeError("FFmpeg processing timeout")
+        # 等待进程完成，使用较短的超时时间
+        # try:
+        #     stdout, stderr = process.communicate(timeout=30)
+        #     if process.returncode != 0:
+        #         print(f"FFmpeg stderr: {stderr.decode()}")
+        #         raise RuntimeError(f"FFmpeg failed with code {process.returncode}")
+        # except subprocess.TimeoutExpired:
+        #     print("FFmpeg超时，强制终止进程")
+        #     process.kill()
+        #     process.wait()
+            # raise RuntimeError("FFmpeg processing timeout")
+            
+    except Exception as e:
+        # 安全地清理进程
+        if process is not None:
+            try:
+                # 不要尝试关闭stdin，直接终止进程
+                process.kill()
+                process.wait(timeout=5)
+            except Exception:
+                pass  # 忽略清理过程中的错误
+        
+        # 提供更详细的错误信息
+        print(f"=== Video Saving Debug Info ===")
+        print(f"Video path: {video_path}")
+        print(f"Number of frames: {len(frames)}")
+        # print(f"Frame shape: {frames[0].shape if frames else 'No frames'}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {e}")
+        print(f"FFmpeg command: {' '.join(cmd)}")
+        
+        # 检查FFmpeg是否可用
+        try:
+            ffmpeg_check = subprocess.run(['ffmpeg', '-version'], 
+                                        capture_output=True, text=True, timeout=5)
+            print(f"FFmpeg available: Yes (return code: {ffmpeg_check.returncode})")
+        except FileNotFoundError:
+            print("FFmpeg available: No - FFmpeg not found in PATH")
+        except Exception as ffmpeg_e:
+            print(f"FFmpeg check failed: {ffmpeg_e}")
+        
+        print(f"================================")
+        print(f"Warning: Failed to save video {video_path}, continuing...")
+        return
 
 def pixel_to_3d_with_depth(pixel_coord, depth, camera_matrix, camera_pose):
     """
@@ -270,6 +395,9 @@ class DataCollectionWrapper(Wrapper):
         assert len(self.states) == 0
         self.states.append(self._current_task_instance_state)
 
+
+
+# 使用
     def _flush(self):
         """
         Method to flush internal state to disk.
@@ -313,15 +441,19 @@ class DataCollectionWrapper(Wrapper):
         # import pdb; pdb.set_trace()
         depth_min = np.min(depth_agentview)
         depth_max = np.max(depth_agentview)
+        ## save first frame of depth as npz 
+        depth_agentview_first = depth_agentview[0]
+        np.savez(os.path.join(self.ep_directory, "depth_agentview_first.npz"), depth_agentview_first=depth_agentview_first)
         
         # Convert depth from min-max range to uint16 (0-65535)
         depth_agentview_normalized = ((depth_agentview - depth_min) / (depth_max - depth_min) * 65535).astype(np.uint16)
-
         ## save the depth_min and depth_max to the depth_min_max.npz
         np.savez(os.path.join(self.ep_directory, "depth_min_max.npz"), depth_min=depth_min, depth_max=depth_max)
         ## save it to avi use FFv1
         video_path = os.path.join(self.ep_directory, "depth.avi")
         import imageio
+
+        # save_16bit_reliable(depth_agentview_normalized, video_path, fps=10.0)
         imageio.mimwrite(video_path, depth_agentview_normalized, fps=10.0, codec='ffv1', pixelformat='gray16le')
         ## save the depth_agentview to the depth_agentview.npz
         # np.savez(os.path.join(self.ep_directory, "depth_agentview.npz"), depth_agentview=depth_agentview)
@@ -358,6 +490,7 @@ class DataCollectionWrapper(Wrapper):
         with open(os.path.join(self.ep_directory, "keypoint2object.json"), "w") as f:
             json.dump(keypoint2object_serializable, f, indent=2)
         # Save video of images
+
         if len(self.images) > 0:
             # Get video writer
             video_path = os.path.join(self.ep_directory, "video.mp4")

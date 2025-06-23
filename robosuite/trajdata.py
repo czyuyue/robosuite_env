@@ -26,7 +26,8 @@ from robosuite.utils.mjcf_utils import save_sim_model
 from robosuite.wrappers import Wrapper
 from robosuite.utils.camera_utils import transform_from_pixels_to_world, get_camera_extrinsic_matrix,get_pointcloud_from_image_and_depth
 from robosuite.utils.camera_utils import project_points_from_world_to_camera,get_camera_intrinsic_matrix
-
+from robosuite.utils.dataset_utils import voxel_downsample
+from robosuite.utils.dataset_utils import read_16bit_avi
 # from ..data_util import crop_pc
 # from ..build import DATASETS
 # from ...transforms.point_transform_cpu import PointsToTensor
@@ -611,13 +612,15 @@ class ROBOSUITE_DATASET(Dataset):
         self.traj_len = traj_len
         np.random.seed(0)
         self.data = []
+        self.n_data = 0
+        self.traj_list = []
         self.env  = suite.make(
                 env_name="Collision",  # 尝试简单的抓取任务
                 robots="Panda",   # 使用Panda机器人
                 gripper_types="WipingGripper",
                 has_renderer=False,  # 关闭实时渲染
                 has_offscreen_renderer=True,  # 启用离屏渲染以录制视频
-                render_camera="frontview",
+                render_camera="agentview",
                 #'frontview', 'birdview', 'agentview', 'sideview', 'robot0_robotview', 'robot0_eye_in_hand'
                 camera_names=["frontview","agentview","birdview"],
                 renderer="mujoco",
@@ -671,7 +674,7 @@ class ROBOSUITE_DATASET(Dataset):
                 print("depth_max: ", depth_max)
                 import pdb; pdb.set_trace()
                 # Extract frames from videos
-                
+        
                 # Load RGB video
                 cap = cv2.VideoCapture(video_path)
                 rgb_frames = []
@@ -686,36 +689,87 @@ class ROBOSUITE_DATASET(Dataset):
                 rgb_frames = np.array(rgb_frames)
                 
                 # Load depth video
-                depth_frames = []
-                depth_reader = imageio.get_reader(depth_video_path)
-                for frame in depth_reader:
-                    # Convert uint16 back to float depth values
-                    depth_normalized = frame.astype(np.float32) / 65535.0
-                    depth_denormalized = depth_normalized * (depth_max - depth_min) + depth_min
-                    depth_frames.append(depth_denormalized)
-                depth_frames = np.array(depth_frames)
+                depth_frames = read_16bit_avi(depth_video_path)
 
+                ## get back the depth_frames
+                depth_frames = depth_frames.astype(np.float32) / 65535.0
+                depth_frames = depth_frames * (depth_max - depth_min) + depth_min
+                print("depth_frames: ", depth_frames.shape)
+                import pdb; pdb.set_trace()
+
+                ##
+                print("depth_frames: ", depth_frames.shape)
+                import pdb; pdb.set_trace()
                 
-                for i in range(episode_length-self.traj_len):
-                    keypoints_traj = keypoint_positions[i:i+self.traj_len]                   
+
+                ## get depth_agentview_first.npz
+                depth_agentview_first_file = os.path.join(data_root, folder, 'depth_agentview_first.npz')
+                depth_agentview_first = np.load(depth_agentview_first_file)['depth_agentview_first']
+                print("depth_agentview_first: ", depth_agentview_first.shape)
+
+                ## compare depth_agentview_first and depth_frames[0]
+                print("depth_agentview_first: ", depth_agentview_first.shape)
+                print("depth_frames[0]: ", depth_frames[0].shape)
+                diff = depth_agentview_first - depth_frames[0][:,:]
+                print("diff: ", diff[100:105, 100:105])
+                import pdb; pdb.set_trace()
+                ## compare depth_agentview_first and depth_frames[0]
+                print("depth_agentview_first: ", depth_agentview_first.shape)
+                print("depth_frames[0]: ", depth_frames[0].shape)
+                import pdb; pdb.set_trace()
+
+                ## compare depth_agentview_first and depth_frames[0]
+                
+                import pdb; pdb.set_trace()
+
+                ep_id = self.n_data
+                self.n_data += 1
+                self.traj_list.append(keypoint_positions)
+
+                # for i in range(episode_length-self.traj_len):
+                #     keypoints_traj = keypoint_positions[i:i+self.traj_len]                                               
+                #     # Get current frame
+                #     rgb = rgb_frames[i]  # Shape: (H, W, 3)
+                #     depth = depth_frames[i]  # Shape: (H, W)
+                #     print("rgb: ", rgb.shape)
+                #     print("depth: ", depth.shape)
+                #     ## type
+                #     print("rgb: ", rgb.dtype)
+                #     print("depth: ", depth.dtype)
+                #     ## output some sample
+                #     print("rgb: ", rgb[100:105, 100:105, :])
+                #     print("depth: ", depth[100:105, 100:105])
+
+                #     ## cdata comprise of 
+                #     cdata = np.concatenate([points_3d, rgb, depth], axis=2)
+                #     print("cdata: ", cdata.shape)
+                #     import pdb; pdb.set_trace()
+            
                     
-                    # Get current frame
-                    rgb = rgb_frames[i]  # Shape: (H, W, 3)
-                    depth = depth_frames[i]  # Shape: (H, W)
-                    print("rgb: ", rgb.shape)
-                    print("depth: ", depth.shape)
-                    ## type
-                    print("rgb: ", rgb.dtype)
-                    print("depth: ", depth.dtype)
-                    ## output some sample
-                    print("rgb: ", rgb[100:105, 100:105, :])
-                    print("depth: ", depth[100:105, 100:105])
-                    
-                    import pdb; pdb.set_trace()
+                    # import pdb; pdb.set_trace()
                     points_3d , _ = get_pointcloud_from_image_and_depth(self.env.sim, rgb, depth,"agentview")
-                    print("points_3d: ", points_3d.shape)
+                    # import pdb; pdb.set_trace()
+
+                    # points_3d_color = np.concatenate([points_3d, rgb], axis=2)
+                    ## visualize the points_3d using open3d
+                    # pcd = o3d.geometry.PointCloud()
+                    # pcd.points = o3d.utility.Vector3dVector(points_3d_vis)
+                    # o3d.visualization.draw_geometries([pcd])
+                    # from pcdviser import visualize_pointcloud
+                    # visualize_pointcloud(points_3d,method='plotly')
+
+                    # import pdb; pdb.set_trace()
+                    
+                    # print(f"current directory: {os.getcwd()}")
+                    # ## 将当前目录设置为 /home/yunzhe/zzzzzworkspaceyy/robosuite_data/robosuite
+                    # os.chdir("/data_new/yueyu/zz/robosuite_env/robosuite")
+                    # print(f"current directory: {os.getcwd()}")
+
+                    # spcd = np.concatenate([points_3d, rgb], axis=2)
+                    # print("points_3d: ", points_3d.shape)
                     ## downsample points_3d by voxel_size
 
+                    
 
                     
                     import pdb; pdb.set_trace()
