@@ -294,17 +294,17 @@ def get_pointcloud_from_image_and_depth(sim, image, depth_map, camera_name):
     o3d_pcd = o3d.geometry.PointCloud.create_from_depth_image(o3d_depth, o3d_cammat)
     ### get camera points
     cam_points = np.asarray(o3d_pcd.points).copy()
-    print("cam_points: ", cam_points[10000:10010])
+    # print("cam_points: ", cam_points[10000:10010])
     # import pdb; pdb.set_trace()
     world_T_cam = get_camera_extrinsic_matrix(sim, camera_name)
     o3d_pcd.transform(world_T_cam)
     points = np.asarray(o3d_pcd.points)
     colors = rgb.reshape(-1, 3)
     pcd = np.concatenate([points, colors], axis=1)
-    print("pcd: ", pcd[10000:10010])
-    print("cam_points: ", cam_points[10000:10010])
-    ## 输出红色字 let check
-    print("\033[91m" + "let check" + "\033[0m")
+    # print("pcd: ", pcd[10000:10010])
+    # print("cam_points: ", cam_points[10000:10010])
+    # ## 输出红色字 let check
+    # print("\033[91m" + "let check" + "\033[0m")
     # import pdb; pdb.set_trace()
     return pcd,cam_points
 

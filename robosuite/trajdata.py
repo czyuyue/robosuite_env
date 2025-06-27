@@ -614,6 +614,7 @@ class ROBOSUITE_DATASET(Dataset):
         self.data = []
         self.n_data = 0
         self.traj_list = []
+        self.part_list = []
         self.env  = suite.make(
                 env_name="Collision",  # 尝试简单的抓取任务
                 robots="Panda",   # 使用Panda机器人
@@ -672,9 +673,9 @@ class ROBOSUITE_DATASET(Dataset):
                 depth_max = depth_min_max['depth_max']
                 print("depth_min: ", depth_min)
                 print("depth_max: ", depth_max)
-                import pdb; pdb.set_trace()
                 # Extract frames from videos
-        
+                keypoint_info = [keypoint_registry[key] for key in keypoint_registry.keys()]
+                keypoint_part_id_name = [{'geom_id': keypoint_info[i]['geom_id'], 'geom_name': keypoint_info[i]['geom_name']} for i in range(len(keypoint_info))]
                 # Load RGB video
                 cap = cv2.VideoCapture(video_path)
                 rgb_frames = []
@@ -694,37 +695,55 @@ class ROBOSUITE_DATASET(Dataset):
                 ## get back the depth_frames
                 depth_frames = depth_frames.astype(np.float32) / 65535.0
                 depth_frames = depth_frames * (depth_max - depth_min) + depth_min
-                print("depth_frames: ", depth_frames.shape)
-                import pdb; pdb.set_trace()
+                # print("depth_frames: ", depth_frames.shape)
+                # import pdb; pdb.set_trace()
 
                 ##
-                print("depth_frames: ", depth_frames.shape)
-                import pdb; pdb.set_trace()
+                # print("depth_frames: ", depth_frames.shape)
+                # import pdb; pdb.set_trace()
                 
 
                 ## get depth_agentview_first.npz
                 depth_agentview_first_file = os.path.join(data_root, folder, 'depth_agentview_first.npz')
                 depth_agentview_first = np.load(depth_agentview_first_file)['depth_agentview_first']
-                print("depth_agentview_first: ", depth_agentview_first.shape)
+                # print("depth_agentview_first: ", depth_agentview_first.shape)
 
                 ## compare depth_agentview_first and depth_frames[0]
-                print("depth_agentview_first: ", depth_agentview_first.shape)
-                print("depth_frames[0]: ", depth_frames[0].shape)
-                diff = depth_agentview_first - depth_frames[0][:,:]
-                print("diff: ", diff[100:105, 100:105])
-                import pdb; pdb.set_trace()
+                # print("depth_agentview_first: ", depth_agentview_first.shape)
+                # print("depth_frames[0]: ", depth_frames[0].shape)
+                # diff = depth_agentview_first - depth_frames[0][:,:]
+                # print("diff: ", diff[100:105, 100:105])
+                # import pdb; pdb.set_trace()
                 ## compare depth_agentview_first and depth_frames[0]
-                print("depth_agentview_first: ", depth_agentview_first.shape)
-                print("depth_frames[0]: ", depth_frames[0].shape)
-                import pdb; pdb.set_trace()
+                # print("depth_agentview_first: ", depth_agentview_first.shape)
+                # print("depth_frames[0]: ", depth_frames[0].shape)
+                # import pdb; pdb.set_trace()
 
                 ## compare depth_agentview_first and depth_frames[0]
-                
-                import pdb; pdb.set_trace()
 
-                ep_id = self.n_data
-                self.n_data += 1
-                self.traj_list.append(keypoint_positions)
+                # import pdb; pdb.set_trace()
+
+                # ep_id = self.n_data
+                # self.n_data += 1
+                # self.traj_list.append(keypoint_positions)
+
+
+                for i in range(episode_length-self.traj_len):
+                    rgb = rgb_frames[i]
+                    depth = depth_frames[i]
+                    points_3d , _ = get_pointcloud_from_image_and_depth(self.env.sim, rgb, depth,"agentview")
+                    ## downsampling 
+                    points_3d = self.pcd_crop(points_3d)
+                    voxel_downsampled_points_3d = voxel_downsample(points_3d, self.voxel_size)
+                    # print("voxel_downsampled_points_3d: ", voxel_downsampled_points_3d.shape)
+                    # from pcdviser import visualize_pointcloud
+                    # visualize_pointcloud(voxel_downsampled_points_3d,method='plotly')
+                    # import pdb; pdb.set_trace()
+                    self.data.append(voxel_downsampled_points_3d)
+                    self.traj_list.append(keypoint_positions[i:i+self.traj_len])
+                    self.part_list.append(keypoint_part_id_name)
+                    self.n_data += 1
+                    # import pdb; pdb.set_trace()
 
                 # for i in range(episode_length-self.traj_len):
                 #     keypoints_traj = keypoint_positions[i:i+self.traj_len]                                               
@@ -747,7 +766,7 @@ class ROBOSUITE_DATASET(Dataset):
             
                     
                     # import pdb; pdb.set_trace()
-                    points_3d , _ = get_pointcloud_from_image_and_depth(self.env.sim, rgb, depth,"agentview")
+                    # points_3d , _ = get_pointcloud_from_image_and_depth(self.env.sim, rgb, depth,"agentview")
                     # import pdb; pdb.set_trace()
 
                     # points_3d_color = np.concatenate([points_3d, rgb], axis=2)
@@ -772,7 +791,7 @@ class ROBOSUITE_DATASET(Dataset):
                     
 
                     
-                    import pdb; pdb.set_trace()
+                    # import pdb; pdb.set_trace()
 
         # for idx, meta in tqdm(enumerate(self.metadata), desc=f'Loading HOI4D_KPST {split} split for unit_r={unit_r}, voxel_size={voxel_size}, voxel_max={voxel_max}'):
         #     data_fp = os.path.join(data_root, 'data', str(meta['id']))
@@ -784,13 +803,84 @@ class ROBOSUITE_DATASET(Dataset):
         #     coord, feat, label = self.kps_center_crop(coord, feat, label, dtraj) 
         #     cdata = np.hstack((coord, feat, np.expand_dims(label, -1))).astype(np.float32)
         #     self.data.append(cdata)
+    def pcd_crop(self, pcd):
+        ## crop the pcd
+        # Define crop bounds
+        x_min, x_max = -0.5, 5.0
+        y_min, y_max = -1.5,1.5
+        z_min, z_max = 0.7, 5.0
+        
+        # Crop point cloud based on bounds
+        mask = (pcd[:, 0] >= x_min) & (pcd[:, 0] <= x_max) & \
+               (pcd[:, 1] >= y_min) & (pcd[:, 1] <= y_max) & \
+               (pcd[:, 2] >= z_min) & (pcd[:, 2] <= z_max)
+        
+        cropped_pcd = pcd[mask]
+        return cropped_pcd
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def _sample_query(self, part_list):
+        num_points = len(part_list)
+        query_idx = np.random.choice(num_points, size=self.n_query, replace=False)
+        return query_idx
+    
+    def __getitem__(self, idx):
+        data_idx = idx % self.n_data
+        coord, feat = np.split(self.data[data_idx], [3], axis=1)
+        query_idx = self._sample_query(self.part_list[data_idx])
+        dtraj = self.traj_list[data_idx]
+        ## 
+        query_mask = np.zeros(len(self.part_list[data_idx]), dtype=bool)
+        query_mask[query_idx] = True
+      
+  
+        data = {'pos': coord.astype(np.float32),                           # (N, 3)  XYZ
+                'x': feat.astype(np.float32),                              # (N, 3)  RGB
+                'dtraj': dtraj.astype(np.float32),                         # (Q, T, 3)
+                'query_mask': query_mask.astype(np.int32),                         # (Q, )
+                'part_id_name': self.part_list[data_idx],                      # (Q, )
+                }
+        return data
+'''
+def __getitem__(self, idx):
+        data_idx = idx % self.n_data
+        coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
+        balance_idx = self.balance_idx_list[idx]   # (Q, )
+        query_idx = self._sample_query(self.part_list[idx], balance_idx, 
+                                       self.dtraj_list[idx][balance_idx, 0, :])
+        dtraj = self.dtraj_list[idx][query_idx]   # (Q, T=5, 3)
+
+        coord, feat, label = self.kpst_hand_mask_augmentation(coord, feat, label)
+        data = {'pos': coord.astype(np.float32),                           # (N, 3)  XYZ
+                'x': feat.astype(np.float32),                              # (N, 3)  RGB
+                'dtraj': dtraj.astype(np.float32),                         # (Q, T=5, 3)
+                'text_feat': self.clip_feats[idx].astype(np.float32)       # (512)
+                }
+        
+        if self.transform is not None:
+            data = self.transform(data)  
+
+        pack = dict()
+        ############################## Scale Trajectory Package ################################
+        if (self.split == 'train') and (self.scale_method is not None):
+            sstep = self.sstep_list[idx][query_idx]
+            scale = self.scale_list[idx][query_idx]
+            pack['ScaleTraj_sstep'] = sstep
+            pack['ScaleTraj_scale'] = scale
+
+        data['pack'] = pack
+
+        return data
+'''
 if __name__ == '__main__':
     dataset = ROBOSUITE_DATASET(data_root='./datasets/collision_data',
                                 processed_root='./datasets/collision_processed',
                                 split='train',
                                 choose_class=None,
                                 traj_len=10,
-                                n_query=64,
+                                n_query=5,
                                 voxel_size=0.02,
                                 voxel_max=None,
                                 transform=None,
